@@ -7,10 +7,8 @@ target/
 # Tauri generated
 /src-tauri/gen/
 
-# Node / frontend build output
-/node_modules/
-# dist/ is the Tauri frontendDist; keep its source HTML/JS/CSS tracked so a
-# fresh clone can build without a separate frontend build step.
+# dist/ is the Tauri frontendDist; its HTML/JS/CSS are the frontend source and
+# are tracked directly, so a fresh clone can build with no frontend build step.
 /dist/*
 !/dist/index.html
 !/dist/settings.html
