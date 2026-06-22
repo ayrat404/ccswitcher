@@ -24,3 +24,4 @@ pub mod env_builder;
 pub mod model;
 pub mod secret_store;
 pub mod settings_env;
+pub mod switcher;

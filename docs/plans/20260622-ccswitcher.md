@@ -226,14 +226,14 @@
 - Create: `src-tauri/src/core/switcher.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] implement `apply_account(config, account_id, deps)` in the exact order of "Switching flow": capture-on-switch-out (keyring) → load settings (invalid aborts) → build env (missing-secret aborts) → merge_env (union strip) → timestamped backup + atomic write settings → (oauth) restore target credential snapshot → persist managed_keys + active_account_id
-- [ ] run under the app-state mutex; make the operation **idempotent** so re-running the same switch heals partial cross-store state (no claim of cross-store transactionality)
-- [ ] handle "active account deleted" by clearing `active_account_id`
-- [ ] write tests (mock stores + temp settings): switch to token writes override; switch to oauth restores snapshot and writes no token key; switching token→oauth→token leaves no stale keys
-- [ ] write tests: **A(oauth)→B→A preserves the latest blob** — simulate live-store refresh between switches, assert restore uses the refreshed blob, not the import-time one
-- [ ] write tests: OAuth account with `base_url` keeps it after a switch (not stripped); missing-secret aborts before any settings write
-- [ ] write test: **cross-store post-abort state** — credential restore fails after settings write; assert settings.json is valid + backed up, keyring capture retained, and a re-run of the switch reaches a consistent state (idempotency)
-- [ ] run tests — must pass before next task
+- [x] implement `apply_account(config, account_id, deps)` in the exact order of "Switching flow": capture-on-switch-out (keyring) → load settings (invalid aborts) → build env (missing-secret aborts) → merge_env (union strip) → timestamped backup + atomic write settings → (oauth) restore target credential snapshot → persist managed_keys + active_account_id
+- [x] run under the app-state mutex; make the operation **idempotent** so re-running the same switch heals partial cross-store state (no claim of cross-store transactionality)
+- [x] handle "active account deleted" by clearing `active_account_id`
+- [x] write tests (mock stores + temp settings): switch to token writes override; switch to oauth restores snapshot and writes no token key; switching token→oauth→token leaves no stale keys
+- [x] write tests: **A(oauth)→B→A preserves the latest blob** — simulate live-store refresh between switches, assert restore uses the refreshed blob, not the import-time one
+- [x] write tests: OAuth account with `base_url` keeps it after a switch (not stripped); missing-secret aborts before any settings write
+- [x] write test: **cross-store post-abort state** — credential restore fails after settings write; assert settings.json is valid + backed up, keyring capture retained, and a re-run of the switch reaches a consistent state (idempotency)
+- [x] run tests — must pass before next task
 
 ### Task 9: Proxy toggle
 
