@@ -140,13 +140,13 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/Models.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/ModelsTests.cs`
 
-- [ ] define `AccountType` enum (`AnthropicOauth`, `Token`) with `[JsonConverter]` matching snake_case JSON values `"anthropic_oauth"` / `"token"`
-- [ ] define `AuthKind` enum (`AuthToken`, `ApiKey`) matching `"auth_token"` / `"api_key"`
-- [ ] define `Account` record: `Id`, `Name`, `AccountType`, `BaseUrl?`, `AuthKind?`, `Identity?`, `ExtraEnv` — JSON field `type` (not `AccountType`)
-- [ ] define `ProxySettings` record with defaults matching Rust (`enabled:false`, `url:"http://127.0.0.1:8080"`, `no_proxy:"localhost,127.0.0.1"`)
-- [ ] define `AppConfig` record: `SchemaVersion`, `ActiveAccountId?`, `Proxy`, `ManagedKeys`, `Accounts`
-- [ ] write round-trip serialization tests: both account types, optional fields absent, JSON field renames (`type` not `AccountType`), minimal config using defaults
-- [ ] run tests — must pass before task 3
+- [x] define `AccountType` enum (`AnthropicOauth`, `Token`) with `[JsonConverter]` matching snake_case JSON values `"anthropic_oauth"` / `"token"`
+- [x] define `AuthKind` enum (`AuthToken`, `ApiKey`) matching `"auth_token"` / `"api_key"`
+- [x] define `Account` record: `Id`, `Name`, `AccountType`, `BaseUrl?`, `AuthKind?`, `Identity?`, `ExtraEnv` — JSON field `type` (not `AccountType`)
+- [x] define `ProxySettings` record with defaults matching Rust (`enabled:false`, `url:"http://127.0.0.1:8080"`, `no_proxy:"localhost,127.0.0.1"`)
+- [x] define `AppConfig` record: `SchemaVersion`, `ActiveAccountId?`, `Proxy`, `ManagedKeys`, `Accounts`
+- [x] write round-trip serialization tests: both account types, optional fields absent, JSON field renames (`type` not `AccountType`), minimal config using defaults
+- [x] run tests — must pass before task 3
 
 ### Task 3: Core/AtomicFile.cs
 
