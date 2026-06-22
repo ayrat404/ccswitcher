@@ -141,12 +141,12 @@
 - Create: `src-tauri/src/core/model.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] define `AccountType` enum (`AnthropicOauth`, `Token`), `AuthKind` enum (`AuthToken`, `ApiKey`)
-- [ ] define `Account` struct (id, name, type, optional `base_url` for both types, `auth_kind` for token, optional `identity` for oauth dedup, extra_env)
-- [ ] define `ProxySettings` (enabled, url, no_proxy) and `AppConfig` (schema_version, active_account_id, proxy, managed_keys, accounts)
-- [ ] derive `Serialize`/`Deserialize` with sensible defaults; add `AppConfig::default()`
-- [ ] write tests: serde round-trip for `AppConfig` (with both account types) and default construction
-- [ ] run tests — must pass before next task
+- [x] define `AccountType` enum (`AnthropicOauth`, `Token`), `AuthKind` enum (`AuthToken`, `ApiKey`)
+- [x] define `Account` struct (id, name, type, optional `base_url` for both types, `auth_kind` for token, optional `identity` for oauth dedup, extra_env)
+- [x] define `ProxySettings` (enabled, url, no_proxy) and `AppConfig` (schema_version, active_account_id, proxy, managed_keys, accounts)
+- [x] derive `Serialize`/`Deserialize` with sensible defaults; add `AppConfig::default()`
+- [x] write tests: serde round-trip for `AppConfig` (with both account types) and default construction
+- [x] run tests — must pass before next task
 
 ### Task 3: Config store (load/save) with atomic write + timestamped backup
 

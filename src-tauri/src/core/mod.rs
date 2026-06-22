@@ -13,5 +13,7 @@
 //!    Anthropic OAuth account, its *live* credential blob is re-snapshotted into
 //!    the keyring so a later switch-back restores the freshest tokens.
 //!
-//! Submodules are added by subsequent tasks. This file currently only documents
-//! the architecture; `pub mod` declarations are introduced as each module lands.
+//! Submodules are added by subsequent tasks; `pub mod` declarations are
+//! introduced as each module lands.
+
+pub mod model;
