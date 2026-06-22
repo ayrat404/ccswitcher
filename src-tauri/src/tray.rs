@@ -24,6 +24,28 @@ pub mod menu_ids {
     pub const ACCOUNT_PREFIX: &str = "account_";
 }
 
+/// Format the proxy toggle menu label.
+///
+/// Returns a string like "☑ Proxy: http://127.0.0.1:8080" or "☐ Proxy: http://127.0.0.1:8080"
+/// depending on whether the proxy is enabled.
+pub fn format_proxy_label(proxy_enabled: bool, proxy_url: &str) -> String {
+    let indicator = if proxy_enabled { "☑" } else { "☐" };
+    format!("{} Proxy: {}", indicator, proxy_url)
+}
+
+/// Format an account menu item label.
+///
+/// Returns a string like "✓ Account Name (oauth)" or "Account Name (token)"
+/// with a checkmark if the account is active.
+pub fn format_account_label(name: &str, account_type: &AccountType, is_active: bool) -> String {
+    let checkmark = if is_active { "✓ " } else { "" };
+    let type_label = match account_type {
+        AccountType::AnthropicOauth => "(oauth)",
+        AccountType::Token => "(token)",
+    };
+    format!("{}{} {}", checkmark, name, type_label)
+}
+
 /// Build a tray menu from the current app state.
 ///
 /// # Arguments
@@ -41,14 +63,7 @@ pub fn build_tray_menu<R: Runtime>(
     // Add account items
     for account in &state_snapshot.accounts {
         let is_active = state_snapshot.active_account_id.as_ref() == Some(&account.id);
-
-        // Build label with checkmark and type
-        let checkmark = if is_active { "✓ " } else { "" };
-        let type_label = match account.account_type {
-            AccountType::AnthropicOauth => "(oauth)",
-            AccountType::Token => "(token)",
-        };
-        let label = format!("{}{} {}", checkmark, account.name, type_label);
+        let label = format_account_label(&account.name, &account.account_type, is_active);
 
         let account_id = format!("{}{}", menu_ids::ACCOUNT_PREFIX, account.id);
 
@@ -67,11 +82,7 @@ pub fn build_tray_menu<R: Runtime>(
     menu_items.push(Box::new(sep));
 
     // Proxy toggle item
-    let proxy_enabled = if state_snapshot.proxy.enabled { "☑" } else { "☐" };
-    let proxy_label = format!(
-        "{} Proxy: {}",
-        proxy_enabled, state_snapshot.proxy.url
-    );
+    let proxy_label = format_proxy_label(state_snapshot.proxy.enabled, &state_snapshot.proxy.url);
     let proxy_item = MenuItem::with_id(
         app_handle,
         menu_ids::PROXY_TOGGLE,
@@ -260,11 +271,31 @@ mod tests {
     }
 
     #[test]
-    fn test_proxy_label_format() {
-        let config = create_test_config();
+    fn test_format_proxy_label() {
+        // Test enabled state
+        assert_eq!(format_proxy_label(true, "http://127.0.0.1:8080"), "☑ Proxy: http://127.0.0.1:8080");
+        // Test disabled state
+        assert_eq!(format_proxy_label(false, "http://127.0.0.1:8080"), "☐ Proxy: http://127.0.0.1:8080");
+        // Test with different URLs
+        assert_eq!(format_proxy_label(true, "https://proxy.example.com:8080"), "☑ Proxy: https://proxy.example.com:8080");
+    }
 
-        let proxy_enabled = if config.proxy.enabled { "☑" } else { "☐" };
-        let expected = format!("{} Proxy: {}", proxy_enabled, config.proxy.url);
-        assert_eq!(expected, "☑ Proxy: http://127.0.0.1:8080");
+    #[test]
+    fn test_format_account_label() {
+        // Test active OAuth account
+        assert_eq!(
+            format_account_label("Work", &AccountType::AnthropicOauth, true),
+            "✓ Work (oauth)"
+        );
+        // Test inactive token account
+        assert_eq!(
+            format_account_label("Personal", &AccountType::Token, false),
+            "Personal (token)"
+        );
+        // Test active token account
+        assert_eq!(
+            format_account_label("Test", &AccountType::Token, true),
+            "✓ Test (token)"
+        );
     }
 }

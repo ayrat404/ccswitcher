@@ -157,20 +157,20 @@ fn main() {
                 tauri::async_runtime::spawn(async move {
                     let state = handle.state::<AppState>();
 
-                    // Get current proxy state
-                    let config = state.mutex.lock().await;
-                    let new_enabled = !config.proxy.enabled;
-                    drop(config);
+                    // Get current proxy state and compute the new enabled flag
+                    let new_enabled = {
+                        let config = state.mutex.lock().await;
+                        !config.proxy.enabled
+                    };
 
-                    if let Err(e) =
-                        ccswitcher_lib::commands::set_proxy_enabled(new_enabled, handle.clone(), state).await
-                    {
+                    let result =
+                        ccswitcher_lib::commands::set_proxy_enabled(new_enabled, handle.clone(), state.clone()).await;
+
+                    if let Err(e) = result {
                         eprintln!("Failed to toggle proxy: {:?}", e);
                     } else {
-                        // Refresh the tray menu
-                        let config = tauri::async_runtime::block_on(async {
-                            handle.state::<AppState>().mutex.lock().await.clone()
-                        });
+                        // Refresh the tray menu with the updated config
+                        let config = state.mutex.lock().await.clone();
                         let _ = ccswitcher_lib::tray::update_tray_icon(&handle, &config);
                     }
                 });
@@ -185,14 +185,14 @@ fn main() {
                 tauri::async_runtime::spawn(async move {
                     let state = handle.state::<AppState>();
 
-                    if let Err(e) = ccswitcher_lib::commands::switch_account(account_id, handle.clone(), state).await
-                    {
+                    let result =
+                        ccswitcher_lib::commands::switch_account(account_id, handle.clone(), state.clone()).await;
+
+                    if let Err(e) = result {
                         eprintln!("Failed to switch account: {:?}", e);
                     } else {
-                        // Refresh the tray menu
-                        let config = tauri::async_runtime::block_on(async {
-                            handle.state::<AppState>().mutex.lock().await.clone()
-                        });
+                        // Refresh the tray menu with the updated config
+                        let config = state.mutex.lock().await.clone();
                         let _ = ccswitcher_lib::tray::update_tray_icon(&handle, &config);
                     }
                 });

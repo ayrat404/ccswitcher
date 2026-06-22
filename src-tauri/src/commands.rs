@@ -632,15 +632,55 @@ pub fn format_success_message(operation: &str, details: &str) -> String {
 }
 
 /// Format an error notification message.
+///
+/// Sanitizes the error to avoid leaking secrets including tokens, OAuth credentials,
+/// and other sensitive values.
 pub fn format_error_message(operation: &str, error: &str) -> String {
-    // Sanitize the error to avoid leaking secrets
-    let sanitized = error
-        .replace("sk-ant-", "***")
-        .replace("sk-", "***")
-        .replace("{", "{")
-        .replace("}", "}")
-        .replace("\"", "\"");
+    // Sanitize the error to avoid leaking secrets.
+    // First, handle JSON structures (OAuth blobs often contain tokens in JSON).
+    // Then sanitize common token patterns.
+    let sanitized = sanitize_secrets(error);
     format!("Failed to {}: {}", operation, sanitized)
+}
+
+/// Sanitize secrets from a string to prevent leakage in error messages.
+///
+/// This function removes or redacts:
+/// - Token-like strings (sk-ant-*, sk-*)
+/// - OAuth credential JSON fields (accessToken, refreshToken, token)
+/// - Other secret patterns
+fn sanitize_secrets(input: &str) -> String {
+    use regex::Regex;
+
+    // Redact known OAuth credential field names in JSON
+    // Pattern: "fieldName": "value" -> "fieldName": "***"
+    let oauth_fields = ["accessToken", "refreshToken", "id_token", "access_token", "refresh_token", "token", "apiKey", "api_key", "api-key"];
+    let mut result = input.to_string();
+
+    for field in oauth_fields {
+        let pattern = format!(r#""{}"\s*:\s*"[^"]*""#, regex::escape(field));
+        if let Ok(re) = Regex::new(&pattern) {
+            let replacement = format!(r#""{}": "***""#, field);
+            result = re.replace_all(&result, &replacement).to_string();
+        }
+    }
+
+    // Redact common token prefixes (avoid partial matches)
+    // Use word boundaries to ensure we match full tokens
+    result = regex::Regex::new(r#"sk-ant-[a-zA-Z0-9_-]+"#)
+        .map(|re| re.replace_all(&result, "sk-ant-***").to_string())
+        .unwrap_or(result);
+
+    result = regex::Regex::new(r#"sk-[a-zA-Z0-9_-]+"#)
+        .map(|re| re.replace_all(&result, "sk-***").to_string())
+        .unwrap_or(result);
+
+    // Redact Bearer tokens
+    result = regex::Regex::new(r#"Bearer [a-zA-Z0-9._\-/=]+"#)
+        .map(|re| re.replace_all(&result, "Bearer ***").to_string())
+        .unwrap_or(result);
+
+    result
 }
 
 /// Emit a success notification via the app event system.
@@ -772,6 +812,40 @@ mod tests {
         let msg = format_error_message("update", "token sk-test-secret invalid");
         assert!(msg.contains("***"));
         assert!(!msg.contains("sk-test-secret"));
+
+        // Test OAuth credential blob sanitization
+        let oauth_blob = r#"{"claudeAiOauth":{"accessToken":"sk-ant-secret","refreshToken":"refresh-secret"}}"#;
+        let msg = format_error_message("import", oauth_blob);
+        assert!(msg.contains("***"));
+        assert!(!msg.contains("sk-ant-secret"));
+        assert!(!msg.contains("refresh-secret"));
+
+        // Test Bearer token sanitization
+        let msg = format_error_message("auth", "Bearer abc123def456 token expired");
+        assert!(msg.contains("Bearer ***"));
+        assert!(!msg.contains("abc123def456"));
+    }
+
+    #[test]
+    fn test_sanitize_secrets() {
+        use super::sanitize_secrets;
+
+        // Token patterns
+        assert!(sanitize_secrets("token sk-ant-12345").contains("***"));
+        assert!(sanitize_secrets("token sk-test123").contains("***"));
+        assert!(!sanitize_secrets("token sk-ant-12345").contains("sk-ant-12345"));
+
+        // OAuth credential fields
+        let blob = r#"{"accessToken":"secret123","refreshToken":"refresh456"}"#;
+        let sanitized = sanitize_secrets(blob);
+        assert!(sanitized.contains(r#""accessToken": "***""#));
+        assert!(sanitized.contains(r#""refreshToken": "***""#));
+        assert!(!sanitized.contains("secret123"));
+        assert!(!sanitized.contains("refresh456"));
+
+        // Bearer tokens
+        assert!(sanitize_secrets("Bearer abc123def456").contains("Bearer ***"));
+        assert!(!sanitize_secrets("Bearer abc123def456").contains("abc123def456"));
     }
 
     #[test]

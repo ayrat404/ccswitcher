@@ -29,6 +29,7 @@ dirs = "5"
 thiserror = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["sync"] }
+regex = "1"
 
 [features]
 # `custom-protocol` is the standard Tauri release feature toggle.

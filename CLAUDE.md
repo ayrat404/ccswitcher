@@ -149,3 +149,60 @@ settings/config files) and is not transactional across them.
 
 Non-idempotent operations (e.g., adding an account) are explicitly marked and
 validated in the UI.
+
+### Frontend integration pattern
+
+The Tauri commands layer (`src-tauri/src/commands.rs`) exposes the core's
+functionality to the frontend (settings window) and tray event handlers.
+
+**Command signature pattern:**
+```rust
+#[tauri::command]
+pub async fn some_command(
+    params: Params,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ResponseType, CommandError>
+```
+
+**State access:**
+- `state.mutex.lock().await` acquires the single async mutex for serialized
+  config access
+- All mutating commands (`switch_account`, `add_token_account`, `update_account`,
+  `delete_account`, `set_proxy_enabled`, `import_current`) must acquire this lock
+- The lock is held only during config read/write; I/O that doesn't touch config
+  (credential store, keyring) can run outside the lock
+
+**Notification pattern:**
+- Commands emit `notification` events via `app.emit()` for success/error/warning
+- Events use `NotificationEvent` enum (`Success`, `Error`, `Warning`)
+- Error messages are sanitized via `sanitize_secrets()` to prevent secret leakage
+- The frontend (`settings.js`) listens for these events to show inline feedback
+
+### Tray menu rebuild pattern
+
+The tray menu must reflect the current app state (active account, proxy status).
+After any state-changing operation:
+
+1. The command handler acquires the mutex and updates `config.json`
+2. On success, the handler emits an event (`proxy_toggle`, `switch_account`)
+3. The main.rs listener receives the event and calls `update_tray_icon()`
+4. `update_tray_icon()` clones the config (under lock) and rebuilds the menu
+
+**Why this pattern?**
+- The Tauri tray API doesn't support fine-grained menu updates; we rebuild
+- The state snapshot ensures the menu reflects the state at the time of rebuild
+- The mutex prevents races between menu rebuild and config updates
+
+**Example flow:**
+```
+user clicks proxy toggle
+  -> tray emits "tray_toggle_proxy" event
+  -> main.rs listener spawns async task
+  -> task acquires mutex, toggles proxy.enabled
+  -> task writes config.json (atomic + backup)
+  -> task emits "proxy_toggle" event on success
+  -> main.rs listener calls update_tray_icon()
+  -> update_tray_icon() acquires mutex, clones config
+  -> build_tray_menu() renders menu with updated proxy state
+```

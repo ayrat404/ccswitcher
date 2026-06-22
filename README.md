@@ -92,6 +92,106 @@ cargo tauri build
 The Rust core (`src-tauri/src/core`) is platform-agnostic and fully unit-tested
 with in-memory mocks, so `cargo test` does not require a real OS keychain.
 
+## Installation / Distribution
+
+Currently ccswitcher must be built from source. Pre-built binaries for Windows
+and macOS may be provided in future releases.
+
+### Building from source
+
+Follow the "Build / run" section above. The `cargo tauri build` command produces
+platform-specific installers in `src-tauri/target/release/bundle/`.
+
+### Windows
+
+After building, the installer is at:
+```
+src-tauri/target/release/bundle/msi/ccswitcher_<version>_x64_en-US.msi
+```
+
+Run the MSI to install ccswitcher. The tray icon will appear in the system
+tray after the first launch.
+
+### macOS
+
+After building, the app bundle is at:
+```
+src-tauri/target/release/bundle/dmg/ccswitcher_<version>.dmg
+```
+
+Open the DMG and drag ccswitcher to Applications. On first launch, you may be
+prompted to grant Keychain access for the `Claude Code-credentials` service.
+
+## Troubleshooting
+
+### Keychain permission prompt (macOS)
+
+When switching to an Anthropic OAuth account for the first time, macOS will
+prompt: *"ccswitcher wants to access your keychain."* This is expected —
+ccswitcher needs to read/write the `Claude Code-credentials` entry to manage
+OAuth snapshots. Click "Always Allow" to avoid future prompts.
+
+### Tray icon not appearing (Windows)
+
+Some system tray configurations hide icons by default. Click the up-arrow in
+the system tray to reveal hidden icons, then drag ccswitcher to the visible
+tray area.
+
+### "Invalid settings.json" error
+
+If `~/.claude/settings.json` contains malformed JSON, ccswitcher will refuse
+to touch it. Fix the JSON manually or restore from a backup in
+`~/.claude/backups/`.
+
+### Switching doesn't take effect
+
+Claude Code reads its configuration at startup. Already-running sessions are
+not affected by switching. Start a new `claude` session to pick up the change.
+
+### OAuth account shows "logout required" after switch
+
+This can happen if ccswitcher's snapshot is out of sync with Claude Code's
+live credential store. Manually log into the account in Claude Code once,
+then use "Import current login" in ccswitcher to refresh the snapshot.
+
+## Configuration schema reference
+
+The `config.json` file (stored in the OS-specific app data directory) has the
+following structure:
+
+```jsonc
+{
+  "schema_version": 1,                    // file format version
+  "active_account_id": "uuid-or-null",   // currently active account
+  "proxy": {
+    "enabled": false,
+    "url": "http://127.0.0.1:8080",
+    "no_proxy": "localhost,127.0.0.1"
+  },
+  "managed_keys": [                       // keys written by ccswitcher
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "HTTP_PROXY"
+  ],
+  "accounts": [
+    {
+      "id": "uuid",
+      "name": "Work",
+      "type": "anthropic_oauth",         // or "token"
+      "base_url": "https://api.anthropic.com",  // optional
+      "auth_kind": "auth_token",         // token only: "auth_token" | "api_key"
+      "identity": "user@example.com",   // oauth only: stable identifier
+      "extra_env": {                     // per-account env vars
+        "CUSTOM_VAR": "value"
+      }
+    }
+  ]
+}
+```
+
+Secrets (tokens and OAuth blobs) are stored in the OS keyring under the
+`ccswitcher` service, keyed by account ID. They never appear in `config.json`.
+
 ## Architecture
 
 - **`src-tauri/src/core/`** — platform-agnostic Rust core: data model, config

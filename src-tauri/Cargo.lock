@@ -282,12 +282,14 @@ version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
  "keyring",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "uuid",
 ]
 
