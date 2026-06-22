@@ -229,15 +229,15 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/EnvBuilder.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/EnvBuilderTests.cs`
 
-- [ ] `EnvBuilder.Build(account, secret, proxy) → Dictionary<string,string>`: produce the env dict
+- [x] `EnvBuilder.Build(account, secret, proxy) → Dictionary<string,string>`: produce the env dict
   - Token + AuthToken → `ANTHROPIC_AUTH_TOKEN = secret` (throw `MissingSecretException` if null)
   - Token + ApiKey → `ANTHROPIC_API_KEY = secret` (throw `MissingSecretException` if null)
   - OAuth → no token key
   - Any → `ANTHROPIC_BASE_URL` if `account.BaseUrl` is set
   - Proxy enabled → `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`
   - Merge `account.ExtraEnv` last
-- [ ] write tests: token with auth_token, token with api_key, oauth writes no token key, proxy keys present when enabled and absent when disabled, extra_env merged, missing secret throws
-- [ ] run tests — must pass before task 10
+- [x] write tests: token with auth_token, token with api_key, oauth writes no token key, proxy keys present when enabled and absent when disabled, extra_env merged, missing secret throws
+- [x] run tests — must pass before task 10
 
 ### Task 10: Core/Switcher.cs
 
