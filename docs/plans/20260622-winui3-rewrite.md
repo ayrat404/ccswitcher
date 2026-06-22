@@ -154,10 +154,10 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/AtomicFile.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/AtomicFileTests.cs`
 
-- [ ] implement `AtomicFile.Write(path, content)`: write to `<path>.tmp` then `File.Move(..., overwrite: true)`
-- [ ] implement `AtomicFile.Backup(path, backupsDir, maxKeep=10)`: copy to `backups/<filename>.<yyyyMMdd_HHmmss_fff>.bak`, prune oldest beyond maxKeep
-- [ ] write tests: atomic write creates target and leaves no `.tmp`; backup creates `.bak` in backups dir; prune retains only newest N; backup on missing source is no-op
-- [ ] run tests — must pass before task 4
+- [x] implement `AtomicFile.Write(path, content)`: write to `<path>.tmp` then `File.Move(..., overwrite: true)`
+- [x] implement `AtomicFile.Backup(path, backupsDir, maxKeep=10)`: copy to `backups/<filename>.<yyyyMMdd_HHmmss_fff>.bak`, prune oldest beyond maxKeep
+- [x] write tests: atomic write creates target and leaves no `.tmp`; backup creates `.bak` in backups dir; prune retains only newest N; backup on missing source is no-op
+- [x] run tests — must pass before task 4
 
 ### Task 4: Core/ClaudePaths.cs + Core/ConfigStore.cs
 
