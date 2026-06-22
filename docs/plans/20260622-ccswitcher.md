@@ -291,12 +291,12 @@
 - Create: `src/styles.css`
 - Modify: `src-tauri/tauri.conf.json`
 
-- [ ] build settings UI: accounts list with add/edit/delete; token-account form (name, base_url, auth_kind, token, extra_env key/value rows)
-- [ ] proxy settings section (url, no_proxy, enabled)
-- [ ] import dialog: prompt for profile name with prefilled default; show duplicate warning when flagged
-- [ ] call Tauri commands via the JS bridge; refresh on save; surface errors inline
-- [ ] manual verification of forms in `cargo tauri dev` (no automated UI tests)
-- [ ] run `cargo test` — must pass before next task
+- [x] build settings UI: accounts list with add/edit/delete; token-account form (name, base_url, auth_kind, token, extra_env key/value rows)
+- [x] proxy settings section (url, no_proxy, enabled)
+- [x] import dialog: prompt for profile name with prefilled default; show duplicate warning when flagged
+- [x] call Tauri commands via the JS bridge; refresh on save; surface errors inline
+- [x] manual verification of forms in `cargo tauri dev` (no automated UI tests)
+- [x] run `cargo test` — must pass before next task
 
 ### Task 14: Notifications and error feedback
 
