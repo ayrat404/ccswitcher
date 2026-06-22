@@ -317,13 +317,13 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher.Tests/Core/AccountManagerTests.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/SecretsTests.cs`
 
-- [ ] implement `AccountManager.AddTokenAccount(config, name, baseUrl, authKind, secret, secretStore, configDir)`: generate UUID, create `Account`, store secret in keyring, append to `config.accounts`, save config
-- [ ] implement `AccountManager.UpdateAccount(config, accountId, name, baseUrl, authKind, newSecret?, secretStore, configDir)`: find account, update fields, update keyring secret only if `newSecret` provided, save config
-- [ ] implement `AccountManager.DeleteAccount(config, accountId, secretStore, configDir)`: remove account from list; if `config.active_account_id == accountId` clear it (dangling id drives buggy capture-on-switch-out); delete keyring secret (also delete `{id}#oauthAccount` key if present); save config
-- [ ] implement `Secrets.Sanitize(message) → string`: redact `sk-ant-*` and `sk-*` tokens, Bearer tokens, and OAuth JSON blobs (mirroring `sanitize_secrets` in commands.rs); applied to ALL user-facing error messages
-- [ ] write `AccountManager` tests: add creates account and stores secret; update renames and optionally updates secret; delete removes account and keyring secret; delete clears active_account_id when it matches; delete removes `{id}#oauthAccount` keyring entry
-- [ ] write `Secrets` tests: sk-ant-* redacted; sk-* redacted; Bearer token redacted; OAuth blob fields redacted; plain text unchanged
-- [ ] run tests — must pass before task 14
+- [x] implement `AccountManager.AddTokenAccount(config, name, baseUrl, authKind, secret, secretStore, configDir)`: generate UUID, create `Account`, store secret in keyring, append to `config.accounts`, save config
+- [x] implement `AccountManager.UpdateAccount(config, accountId, name, baseUrl, authKind, newSecret?, secretStore, configDir)`: find account, update fields, update keyring secret only if `newSecret` provided, save config
+- [x] implement `AccountManager.DeleteAccount(config, accountId, secretStore, configDir)`: remove account from list; if `config.active_account_id == accountId` clear it (dangling id drives buggy capture-on-switch-out); delete keyring secret (also delete `{id}#oauthAccount` key if present); save config
+- [x] implement `Secrets.Sanitize(message) → string`: redact `sk-ant-*` and `sk-*` tokens, Bearer tokens, and OAuth JSON blobs (mirroring `sanitize_secrets` in commands.rs); applied to ALL user-facing error messages
+- [x] write `AccountManager` tests: add creates account and stores secret; update renames and optionally updates secret; delete removes account and keyring secret; delete clears active_account_id when it matches; delete removes `{id}#oauthAccount` keyring entry
+- [x] write `Secrets` tests: sk-ant-* redacted; sk-* redacted; Bearer token redacted; OAuth blob fields redacted; plain text unchanged
+- [x] run tests — must pass before task 14
 
 ### Task 14: TrayIcon + App wiring
 
