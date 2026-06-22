@@ -19,3 +19,4 @@
 pub mod atomic;
 pub mod config_store;
 pub mod model;
+pub mod secret_store;

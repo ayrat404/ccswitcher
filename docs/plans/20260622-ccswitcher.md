@@ -169,11 +169,11 @@
 - Create: `src-tauri/src/core/secret_store.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] define `SecretStore` trait (`get`, `set`, `delete` by account id)
-- [ ] implement `KeyringSecretStore` using the `keyring` crate (service `ccswitcher`, account = id)
-- [ ] implement `InMemorySecretStore` for tests
-- [ ] write tests against `InMemorySecretStore` (set/get/delete, get-missing returns None)
-- [ ] run tests — must pass before next task
+- [x] define `SecretStore` trait (`get`, `set`, `delete` by account id)
+- [x] implement `KeyringSecretStore` using the `keyring` crate (service `ccswitcher`, account = id)
+- [x] implement `InMemorySecretStore` for tests
+- [x] write tests against `InMemorySecretStore` (set/get/delete, get-missing returns None)
+- [x] run tests — must pass before next task
 
 ### Task 5: Claude Code paths + settings.json env-merge engine (core)
 
