@@ -289,25 +289,25 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/Importer.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/ImporterTests.cs`
 
-- [ ] define `ImportCandidate` discriminated union: `Token { Secret, AuthKind, BaseUrl? }` and `Oauth { Blob, Identity? }`
-- [ ] define `ImportResult` discriminated union: `Created(Account)` and `CreatedWithWarning(Account, string)`
-- [ ] implement `Importer.Detect(managedKeys, settingsPath, userConfigPath, credentialStore) → ImportCandidate?`:
+- [x] define `ImportCandidate` discriminated union: `Token { Secret, AuthKind, BaseUrl? }` and `Oauth { Blob, Identity? }`
+- [x] define `ImportResult` discriminated union: `Created(Account)` and `CreatedWithWarning(Account, string)`
+- [x] implement `Importer.Detect(managedKeys, settingsPath, userConfigPath, credentialStore) → ImportCandidate?`:
   - load `settings.json`; check env for non-managed `ANTHROPIC_AUTH_TOKEN` (prefer over API_KEY) then `ANTHROPIC_API_KEY` — use **only `config.managed_keys`**, NOT the constant `MANAGED_KEYS`
   - if no non-managed token: read credential store; if non-empty blob → OAuth candidate with identity from `~/.claude.json` `oauthAccount` (`accountUuid` preferred over `emailAddress`) falling back to `extract_identity(blob)` fields (`email`, `account_id`, `accountId` inside `claudeAiOauth`)
   - return null if neither found
-- [ ] implement `Importer.DefaultName(candidate) → string`:
+- [x] implement `Importer.DefaultName(candidate) → string`:
   - Token with base_url → strip scheme, take host only (e.g. `"api.anthropic.com"`)
   - Token without base_url → `"Token Account"`
   - OAuth with email identity → use identity
   - OAuth with non-email identity or none → `"Anthropic"`
-- [ ] implement `Importer.Import(candidate, name, existingAccounts, secretStore) → ImportResult`:
+- [x] implement `Importer.Import(candidate, name, existingAccounts, secretStore) → ImportResult`:
   - generate fresh UUID for id
   - Token duplicate: match on `base_url + auth_kind` → `CreatedWithWarning`
   - OAuth duplicate (1): identity match on existing accounts → `CreatedWithWarning`
   - OAuth duplicate (2): normalized blob fingerprint match (strip `VOLATILE_BLOB_FIELDS`: `accessToken`, `refreshToken`, `expiresAt`, `expiresAtTimestamp`, `tokenResponse`, `idToken`) against stored blobs in keyring → `CreatedWithWarning`
   - store secret in keyring; return `Created` or `CreatedWithWarning`
-- [ ] write tests mirroring Rust test suite: detect returns token when auth_token present; detect returns token when api_key present; detect extracts base_url; detect returns oauth when credentials non-empty; detect returns null when neither exists; detect ignores managed auth_token key; detect ignores managed api_key key; detect falls back to oauth when token is managed; detect prefers auth_token over api_key; detect uses user_config for oauth identity; constant MANAGED_KEYS NOT used for ignore; default_name all cases; import creates token account and stores secret; import creates oauth account and stores blob; import token dup returns warning; import token different auth_kind no warning; import oauth dup by identity returns warning; import oauth no identity skips identity dedup; import oauth dup by blob returns warning; normalize_blob strips volatile fields; normalize_blob returns null for invalid json; extract_identity all cases
-- [ ] run tests — must pass before task 13
+- [x] write tests mirroring Rust test suite: detect returns token when auth_token present; detect returns token when api_key present; detect extracts base_url; detect returns oauth when credentials non-empty; detect returns null when neither exists; detect ignores managed auth_token key; detect ignores managed api_key key; detect falls back to oauth when token is managed; detect prefers auth_token over api_key; detect uses user_config for oauth identity; constant MANAGED_KEYS NOT used for ignore; default_name all cases; import creates token account and stores secret; import creates oauth account and stores blob; import token dup returns warning; import token different auth_kind no warning; import oauth dup by identity returns warning; import oauth no identity skips identity dedup; import oauth dup by blob returns warning; normalize_blob strips volatile fields; normalize_blob returns null for invalid json; extract_identity all cases
+- [x] run tests — must pass before task 13
 
 ### Task 13: Core/AccountManager.cs + Core/Secrets.cs
 
