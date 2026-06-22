@@ -274,14 +274,14 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/Proxy.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/ProxyTests.cs`
 
-- [ ] define `ProxyDeps` with: `settingsPath`, `configDir`, `ISecretStore` — **no credential store** (structural guarantee that proxy toggle never touches OAuth credentials)
-- [ ] implement `Proxy.SetEnabled(config, enabled, deps)`:
+- [x] define `ProxyDeps` with: `settingsPath`, `configDir`, `ISecretStore` — **no credential store** (structural guarantee that proxy toggle never touches OAuth credentials)
+- [x] implement `Proxy.SetEnabled(config, enabled, deps)`:
   1. Update `config.proxy.enabled`
   2. No active account → persist flag only, no settings write (return)
   3. Dangling active id (account deleted) → same: persist flag only
   4. Load settings, build active account's env with updated proxy, merge, backup+atomic write, persist config with new managed_keys
-- [ ] write tests: enabling adds proxy keys; disabling removes them; account env survives toggle; no active account stores flag only without settings write; dangling id stores flag only; `PanicCredentialStore` test proves credential store is never called (by construction — `ProxyDeps` has no credential store field)
-- [ ] run tests — must pass before task 12
+- [x] write tests: enabling adds proxy keys; disabling removes them; account env survives toggle; no active account stores flag only without settings write; dangling id stores flag only; `PanicCredentialStore` test proves credential store is never called (by construction — `ProxyDeps` has no credential store field)
+- [x] run tests — must pass before task 12
 
 ### Task 12: Core/Importer.cs
 

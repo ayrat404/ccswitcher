@@ -166,7 +166,7 @@ public sealed class AppConfig
 
     /// <summary>Global proxy settings.</summary>
     [JsonPropertyName("proxy")]
-    public ProxySettings Proxy { get; init; } = ProxySettings.Default;
+    public ProxySettings Proxy { get; set; } = ProxySettings.Default;
 
     /// <summary>The set of env keys last written by ccswitcher into settings.json's env.
     /// Used to robustly strip prior managed/extra keys on the next switch.</summary>
