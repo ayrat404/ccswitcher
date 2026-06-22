@@ -209,7 +209,7 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - [x] implement `FileCredentialStore`: reads/writes `~/.claude/.credentials.json` atomically (backup + temp + rename)
 - [x] implement `InMemoryCredentialStore` for tests
 - [x] write tests: read missing returns null; write+read round-trip; atomic write leaves no `.tmp`; backup created on write
-- [ ] run tests — must pass before task 8
+- [x] run tests — must pass before task 8
 
 ### Task 8: Core/SettingsEnv.cs
 
@@ -217,11 +217,11 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/SettingsEnv.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/SettingsEnvTests.cs`
 
-- [ ] `SettingsEnv.Load(path) → JsonNode`: return `{}` if missing; throw `SettingsException` on invalid JSON; throw `SettingsException` if top-level is not a JSON object
-- [ ] `SettingsEnv.MergeEnv(settings, oldManagedKeys, newEnv) → (JsonNode merged, List<string> newManagedKeys)`: strip union of `MANAGED_KEYS + oldManagedKeys` from `settings["env"]`; if `env` is absent or not an object, treat as `{}`; inject `newEnv`; return new managed-key list
-- [ ] define `MANAGED_KEYS` constant set: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`
-- [ ] write tests: managed keys replaced; user keys survive; union of old+new managed keys stripped; missing file returns empty object; invalid JSON throws; non-object top-level throws; non-object `env` treated as `{}`
-- [ ] run tests — must pass before task 9
+- [x] `SettingsEnv.Load(path) → JsonNode`: return `{}` if missing; throw `SettingsException` on invalid JSON; throw `SettingsException` if top-level is not a JSON object
+- [x] `SettingsEnv.MergeEnv(settings, oldManagedKeys, newEnv) → (JsonNode merged, List<string> newManagedKeys)`: strip union of `MANAGED_KEYS + oldManagedKeys` from `settings["env"]`; if `env` is absent or not an object, treat as `{}`; inject `newEnv`; return new managed-key list
+- [x] define `MANAGED_KEYS` constant set: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`
+- [x] write tests: managed keys replaced; user keys survive; union of old+new managed keys stripped; missing file returns empty object; invalid JSON throws; non-object top-level throws; non-object `env` treated as `{}`
+- [x] run tests — must pass before task 9
 
 ### Task 9: Core/EnvBuilder.cs
 
