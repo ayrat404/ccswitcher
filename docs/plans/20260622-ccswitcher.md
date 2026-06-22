@@ -241,10 +241,10 @@
 - Create: `src-tauri/src/core/proxy.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] implement `set_proxy_enabled(config, enabled, deps)` that updates `config.proxy.enabled` and re-writes **only** the active account's env in `settings.json` (merge_env + atomic write) — it does **not** touch the credential store or trigger capture-on-switch-out (lighter than a full account switch)
-- [ ] no-op safely when there is no active account (persist flag only)
-- [ ] write tests: enabling proxy adds proxy keys to active account env; disabling removes them; toggle with no active account just stores flag; toggle performs no credential-store I/O
-- [ ] run tests — must pass before next task
+- [x] implement `set_proxy_enabled(config, enabled, deps)` that updates `config.proxy.enabled` and re-writes **only** the active account's env in `settings.json` (merge_env + atomic write) — it does **not** touch the credential store or trigger capture-on-switch-out (lighter than a full account switch)
+- [x] no-op safely when there is no active account (persist flag only)
+- [x] write tests: enabling proxy adds proxy keys to active account env; disabling removes them; toggle with no active account just stores flag; toggle performs no credential-store I/O
+- [x] run tests — must pass before next task
 
 ### Task 10: Import current login
 
@@ -252,11 +252,11 @@
 - Create: `src-tauri/src/core/import.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] implement `detect_current(config) -> ImportCandidate`: **ignore env keys currently in `config.managed_keys`** (so ccswitcher's own injected token is not re-imported); if a non-managed (`AUTH_TOKEN`|`API_KEY`) is present → Token candidate (extract optional base_url, token, auth_kind); else if credential store non-empty → Oauth candidate (snapshot blob + try to extract a stable `identity` from the blob if present); else → None
-- [ ] implement `default_name(candidate)` (host of base_url for token, `"Anthropic"` for oauth)
-- [ ] implement `import(candidate, name, config, deps)` creating the account, storing secret in keyring; duplicate flag: token → match on base_url + auth_kind; oauth → match on `identity` if available, otherwise **skip dedup** (do not compare raw blobs — they change on token refresh)
-- [ ] write tests: detect token / oauth / none; **import ignores ccswitcher-managed env keys** (no self-import after a prior switch); default_name derivation; import creates account + secret; token duplicate detection returns warning flag; oauth dedup by identity (and no false positive when identity absent)
-- [ ] run tests — must pass before next task
+- [x] implement `detect_current(config) -> ImportCandidate`: **ignore env keys currently in `config.managed_keys`** (so ccswitcher's own injected token is not re-imported); if a non-managed (`AUTH_TOKEN`|`API_KEY`) is present → Token candidate (extract optional base_url, token, auth_kind); else if credential store non-empty → Oauth candidate (snapshot blob + try to extract a stable `identity` from the blob if present); else → None
+- [x] implement `default_name(candidate)` (host of base_url for token, `"Anthropic"` for oauth)
+- [x] implement `import(candidate, name, config, deps)` creating the account, storing secret in keyring; duplicate flag: token → match on base_url + auth_kind; oauth → match on `identity` if available, otherwise **skip dedup** (do not compare raw blobs — they change on token refresh)
+- [x] write tests: detect token / oauth / none; **import ignores ccswitcher-managed env keys** (no self-import after a prior switch); default_name derivation; import creates account + secret; token duplicate detection returns warning flag; oauth dedup by identity (and no false positive when identity absent)
+- [x] run tests — must pass before next task
 
 ### Task 11: Tauri commands (core ↔ frontend bridge)
 
