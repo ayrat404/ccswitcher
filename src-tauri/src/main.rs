@@ -163,7 +163,7 @@ fn main() {
                     drop(config);
 
                     if let Err(e) =
-                        ccswitcher_lib::commands::set_proxy_enabled(new_enabled, state).await
+                        ccswitcher_lib::commands::set_proxy_enabled(new_enabled, handle.clone(), state).await
                     {
                         eprintln!("Failed to toggle proxy: {:?}", e);
                     } else {
@@ -185,7 +185,7 @@ fn main() {
                 tauri::async_runtime::spawn(async move {
                     let state = handle.state::<AppState>();
 
-                    if let Err(e) = ccswitcher_lib::commands::switch_account(account_id, state).await
+                    if let Err(e) = ccswitcher_lib::commands::switch_account(account_id, handle.clone(), state).await
                     {
                         eprintln!("Failed to switch account: {:?}", e);
                     } else {

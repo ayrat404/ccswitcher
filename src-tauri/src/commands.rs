@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -305,9 +305,18 @@ pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountDto>
 #[tauri::command]
 pub async fn switch_account(
     account_id: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), CommandError> {
     let mut config = state.mutex.lock().await;
+
+    // Find the account name for the notification
+    let account_name = config
+        .accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .map(|a| a.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let deps = SwitchDeps {
         settings_path: &state.settings_path,
@@ -316,17 +325,29 @@ pub async fn switch_account(
         credential_store: state.credential_store.as_ref(),
     };
 
-    apply_switch_account(&mut config, &account_id, &deps)?;
-    Ok(())
+    match apply_switch_account(&mut config, &account_id, &deps) {
+        Ok(()) => {
+            let _ = emit_success(&app, format_success_message("Active account", &account_name));
+            Ok(())
+        }
+        Err(e) => {
+            let _ = emit_error(&app, format_error_message("switch account", &e.to_string()));
+            Err(e.into())
+        }
+    }
 }
 
 /// Set whether the global proxy is enabled.
 #[tauri::command]
 pub async fn set_proxy_enabled(
     enabled: bool,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), CommandError> {
     let mut config = state.mutex.lock().await;
+
+    // Get proxy URL for notification
+    let proxy_url = config.proxy.url.clone();
 
     let deps = ProxyDeps {
         settings_path: &state.settings_path,
@@ -334,8 +355,18 @@ pub async fn set_proxy_enabled(
         secret_store: state.secret_store.as_ref(),
     };
 
-    apply_proxy_enabled(&mut config, enabled, &deps)?;
-    Ok(())
+    match apply_proxy_enabled(&mut config, enabled, &deps) {
+        Ok(()) => {
+            let status = if enabled { "enabled" } else { "disabled" };
+            let message = format!("Proxy {}: {}", status, proxy_url);
+            let _ = emit_success(&app, message);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = emit_error(&app, format_error_message("toggle proxy", &e.to_string()));
+            Err(e.into())
+        }
+    }
 }
 
 /// Get the current proxy settings.
@@ -349,6 +380,7 @@ pub async fn get_proxy(state: State<'_, AppState>) -> Result<ProxySettings, Comm
 #[tauri::command]
 pub async fn add_token_account(
     params: AddTokenAccountParams,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AccountDto, CommandError> {
     let mut config = state.mutex.lock().await;
@@ -358,10 +390,12 @@ pub async fn add_token_account(
         "auth_token" => AuthKind::AuthToken,
         "api_key" => AuthKind::ApiKey,
         _ => {
-            return Err(CommandError {
+            let err = CommandError {
                 kind: CommandErrorKind::SerializeFailed,
                 message: format!("invalid auth_kind: {}", params.auth_kind),
-            });
+            };
+            let _ = emit_error(&app, format_error_message("add account", &err.message));
+            return Err(err);
         }
     };
 
@@ -369,12 +403,16 @@ pub async fn add_token_account(
     let id = Uuid::new_v4().to_string();
 
     // Store the secret in the keyring.
-    state.secret_store.as_ref().set(&id, &params.secret)?;
+    if let Err(e) = state.secret_store.as_ref().set(&id, &params.secret) {
+        let err = CommandError::from(e);
+        let _ = emit_error(&app, format_error_message("add account", &err.message));
+        return Err(err);
+    }
 
     // Create the account.
     let account = Account {
         id: id.clone(),
-        name: params.name,
+        name: params.name.clone(),
         account_type: AccountType::Token,
         base_url: params.base_url,
         auth_kind: Some(auth_kind),
@@ -383,8 +421,14 @@ pub async fn add_token_account(
     };
 
     // Add to config and persist.
-    config.accounts.push(account);
-    ConfigStore::save(&state.config_dir, &config)?;
+    config.accounts.push(account.clone());
+    if let Err(e) = ConfigStore::save(&state.config_dir, &config) {
+        let err = CommandError::from(e);
+        let _ = emit_error(&app, format_error_message("add account", &err.message));
+        return Err(err);
+    }
+
+    let _ = emit_success(&app, format_success_message("Account added", &params.name));
 
     Ok(AccountDto::from(
         config.accounts.iter().find(|a| a.id == id).unwrap().clone(),
@@ -395,6 +439,7 @@ pub async fn add_token_account(
 #[tauri::command]
 pub async fn update_account(
     params: UpdateAccountParams,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AccountDto, CommandError> {
     let mut config = state.mutex.lock().await;
@@ -404,14 +449,18 @@ pub async fn update_account(
         .accounts
         .iter_mut()
         .find(|a| a.id == params.id)
-        .ok_or_else(|| CommandError {
-            kind: CommandErrorKind::AccountNotFound,
-            message: format!("account not found: {}", params.id),
+        .ok_or_else(|| {
+            let err = CommandError {
+                kind: CommandErrorKind::AccountNotFound,
+                message: format!("account not found: {}", params.id),
+            };
+            let _ = emit_error(&app, format_error_message("update account", &err.message));
+            err
         })?;
 
     // Update fields.
-    if let Some(name) = params.name {
-        account.name = name;
+    if let Some(name) = params.name.clone() {
+        account.name = name.clone();
     }
     if let Some(base_url) = params.base_url {
         account.base_url = Some(base_url);
@@ -422,14 +471,25 @@ pub async fn update_account(
 
     // Update secret if provided.
     if let Some(secret) = params.secret {
-        state.secret_store.as_ref().set(&params.id, &secret)?;
+        if let Err(e) = state.secret_store.as_ref().set(&params.id, &secret) {
+            let err = CommandError::from(e);
+            let _ = emit_error(&app, format_error_message("update account", &err.message));
+            return Err(err);
+        }
     }
 
     // Clone the account before persisting (borrow checker).
     let updated_account = account.clone();
 
     // Persist config.
-    ConfigStore::save(&state.config_dir, &config)?;
+    if let Err(e) = ConfigStore::save(&state.config_dir, &config) {
+        let err = CommandError::from(e);
+        let _ = emit_error(&app, format_error_message("update account", &err.message));
+        return Err(err);
+    }
+
+    let account_name = updated_account.name.clone();
+    let _ = emit_success(&app, format_success_message("Account updated", &account_name));
 
     Ok(AccountDto::from(updated_account))
 }
@@ -438,24 +498,37 @@ pub async fn update_account(
 #[tauri::command]
 pub async fn delete_account(
     account_id: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), CommandError> {
     let mut config = state.mutex.lock().await;
 
-    // Check if account exists.
-    let exists = config.accounts.iter().any(|a| a.id == account_id);
+    // Check if account exists and get its name for notification
+    let account_name = config
+        .accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .map(|a| a.name.clone());
+
+    let exists = account_name.is_some();
     if !exists {
-        return Err(CommandError {
+        let err = CommandError {
             kind: CommandErrorKind::AccountNotFound,
             message: format!("account not found: {}", account_id),
-        });
+        };
+        let _ = emit_error(&app, format_error_message("delete account", &err.message));
+        return Err(err);
     }
 
     // Remove from accounts.
     config.accounts.retain(|a| a.id != account_id);
 
     // Clear secret from keyring.
-    state.secret_store.as_ref().delete(&account_id)?;
+    if let Err(e) = state.secret_store.as_ref().delete(&account_id) {
+        let err = CommandError::from(e);
+        let _ = emit_error(&app, format_error_message("delete account", &err.message));
+        return Err(err);
+    }
 
     // Clear active_account_id if we deleted the active account.
     if config.active_account_id.as_ref() == Some(&account_id) {
@@ -463,7 +536,13 @@ pub async fn delete_account(
     }
 
     // Persist config.
-    ConfigStore::save(&state.config_dir, &config)?;
+    if let Err(e) = ConfigStore::save(&state.config_dir, &config) {
+        let err = CommandError::from(e);
+        let _ = emit_error(&app, format_error_message("delete account", &err.message));
+        return Err(err);
+    }
+
+    let _ = emit_success(&app, format_success_message("Account deleted", &account_name.unwrap()));
 
     Ok(())
 }
@@ -472,6 +551,7 @@ pub async fn delete_account(
 #[tauri::command]
 pub async fn import_current(
     name: Option<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ImportResultDto, CommandError> {
     let mut config = state.mutex.lock().await;
@@ -494,28 +574,35 @@ pub async fn import_current(
 
     // Import the account.
     let result = import_account(
-        candidate,
+        candidate.clone(),
         &account_name,
         &config.accounts,
         state.secret_store.as_ref(),
-    )?;
+    );
 
     match result {
-        ImportResult::Created(account) => {
+        Ok(ImportResult::Created(account)) => {
             config.accounts.push(account.clone());
             ConfigStore::save(&state.config_dir, &config)?;
+            let _ = emit_success(&app, format_success_message("Account imported", &account.name));
             Ok(ImportResultDto {
                 account: AccountDto::from(account),
                 warning: None,
             })
         }
-        ImportResult::CreatedWithWarning(account, warning) => {
+        Ok(ImportResult::CreatedWithWarning(account, warning)) => {
             config.accounts.push(account.clone());
             ConfigStore::save(&state.config_dir, &config)?;
+            let _ = emit_warning(&app, warning.clone());
+            let _ = emit_success(&app, format_success_message("Account imported", &account.name));
             Ok(ImportResultDto {
                 account: AccountDto::from(account),
                 warning: Some(warning),
             })
+        }
+        Err(e) => {
+            let _ = emit_error(&app, format_error_message("import account", &e.to_string()));
+            Err(e.into())
         }
     }
 }
@@ -527,12 +614,57 @@ pub async fn get_state(state: State<'_, AppState>) -> Result<StateDto, CommandEr
     Ok(StateDto::from(config.clone()))
 }
 
+/// Notification event type.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", content = "data")]
+pub enum NotificationEvent {
+    #[serde(rename = "success")]
+    Success { message: String },
+    #[serde(rename = "error")]
+    Error { message: String },
+    #[serde(rename = "warning")]
+    Warning { message: String },
+}
+
+/// Format a success notification message for an operation.
+pub fn format_success_message(operation: &str, details: &str) -> String {
+    format!("{}: {}", operation, details)
+}
+
+/// Format an error notification message.
+pub fn format_error_message(operation: &str, error: &str) -> String {
+    // Sanitize the error to avoid leaking secrets
+    let sanitized = error
+        .replace("sk-ant-", "***")
+        .replace("sk-", "***")
+        .replace("{", "{")
+        .replace("}", "}")
+        .replace("\"", "\"");
+    format!("Failed to {}: {}", operation, sanitized)
+}
+
+/// Emit a success notification via the app event system.
+fn emit_success(app: &AppHandle, message: String) -> Result<(), Box<dyn std::error::Error>> {
+    app.emit("notification", NotificationEvent::Success { message })?;
+    Ok(())
+}
+
+/// Emit an error notification via the app event system.
+fn emit_error(app: &AppHandle, message: String) -> Result<(), Box<dyn std::error::Error>> {
+    app.emit("notification", NotificationEvent::Error { message })?;
+    Ok(())
+}
+
+/// Emit a warning notification via the app event system.
+fn emit_warning(app: &AppHandle, message: String) -> Result<(), Box<dyn std::error::Error>> {
+    app.emit("notification", NotificationEvent::Warning { message })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::credential_store::InMemoryCredentialStore;
     use crate::core::model::{Account, AccountType, AuthKind};
-    use crate::core::secret_store::InMemorySecretStore;
     use std::collections::BTreeMap;
 
     #[test]
@@ -616,5 +748,53 @@ mod tests {
         assert_eq!(dto.accounts.len(), 1);
         assert_eq!(dto.accounts[0].id, "acc-1");
         assert_eq!(dto.accounts[0].extra_env, extra);
+    }
+
+    #[test]
+    fn test_format_success_message() {
+        let msg = format_success_message("Active account", "Work");
+        assert_eq!(msg, "Active account: Work");
+
+        let msg = format_success_message("Proxy enabled", "http://127.0.0.1:8080");
+        assert_eq!(msg, "Proxy enabled: http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn test_format_error_message() {
+        let msg = format_error_message("switch account", "account not found");
+        assert_eq!(msg, "Failed to switch account: account not found");
+
+        // Test that secrets are sanitized
+        let msg = format_error_message("add account", "invalid token sk-ant-12345");
+        assert!(msg.contains("***"));
+        assert!(!msg.contains("sk-ant-12345"));
+
+        let msg = format_error_message("update", "token sk-test-secret invalid");
+        assert!(msg.contains("***"));
+        assert!(!msg.contains("sk-test-secret"));
+    }
+
+    #[test]
+    fn test_notification_event_serialization() {
+        let event = NotificationEvent::Success {
+            message: "Account imported: Work".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("success"));
+        assert!(json.contains("Account imported"));
+
+        let event = NotificationEvent::Error {
+            message: "Failed to switch: account not found".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("error"));
+        assert!(json.contains("Failed"));
+
+        let event = NotificationEvent::Warning {
+            message: "Duplicate account detected".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("warning"));
+        assert!(json.contains("Duplicate"));
     }
 }

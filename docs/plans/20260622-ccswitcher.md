@@ -304,11 +304,11 @@
 - Modify: `src-tauri/src/commands.rs`
 - Modify: `src-tauri/src/tray.rs`
 
-- [ ] emit native notification after switch ("Active account: X"), proxy toggle, and import
-- [ ] show error notification on failures (invalid settings.json, missing credentials on import, keyring failure)
-- [ ] update tray tooltip with active account name
-- [ ] write tests for any message-formatting helpers (success/error text)
-- [ ] run tests — must pass before next task
+- [x] emit native notification after switch ("Active account: X"), proxy toggle, and import
+- [x] show error notification on failures (invalid settings.json, missing credentials on import, keyring failure)
+- [x] update tray tooltip with active account name
+- [x] write tests for any message-formatting helpers (success/error text)
+- [x] run tests — must pass before next task
 
 ### Task 15: Verify acceptance criteria
 - [ ] verify all Acceptance Criteria from Overview are implemented (OAuth + token switching, A→B→A preserves latest creds, OAuth base_url preserved, global proxy toggle, per-account extra env, import)
