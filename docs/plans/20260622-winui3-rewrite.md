@@ -166,14 +166,14 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/ConfigStore.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/ConfigStoreTests.cs`
 
-- [ ] `ClaudePaths.SettingsPath` → `%USERPROFILE%\.claude\settings.json`
-- [ ] `ClaudePaths.CredentialsPath` → `%USERPROFILE%\.claude\.credentials.json`
-- [ ] `ClaudePaths.FindUserConfig()` → returns the first of `[%USERPROFILE%\.claude\.claude.json, %USERPROFILE%\.claude.json]` that exists on disk, or `null`
-- [ ] `ClaudePaths.AppConfigDir` → `%APPDATA%\ccswitcher\`
-- [ ] `ConfigStore.Load(dir)` → deserialize `config.json`, return `AppConfig.Default` if missing; throw on invalid JSON
-- [ ] `ConfigStore.Save(dir, config)` → atomic write (backup + temp + rename); creates dir if absent
-- [ ] write tests using temp directories: load missing returns default; invalid JSON throws; save+load round-trip; backup created on save; `AppConfigDir` resolves to same path as Tauri app (`%APPDATA%\ccswitcher\`)
-- [ ] run tests — must pass before task 5
+- [x] `ClaudePaths.SettingsPath` → `%USERPROFILE%\.claude\settings.json`
+- [x] `ClaudePaths.CredentialsPath` → `%USERPROFILE%\.claude\.credentials.json`
+- [x] `ClaudePaths.FindUserConfig()` → returns the first of `[%USERPROFILE%\.claude\.claude.json, %USERPROFILE%\.claude.json]` that exists on disk, or `null`
+- [x] `ClaudePaths.AppConfigDir` → `%APPDATA%\ccswitcher\`
+- [x] `ConfigStore.Load(dir)` → deserialize `config.json`, return `AppConfig.Default` if missing; throw on invalid JSON
+- [x] `ConfigStore.Save(dir, config)` → atomic write (backup + temp + rename); creates dir if absent
+- [x] write tests using temp directories: load missing returns default; invalid JSON throws; save+load round-trip; backup created on save; `AppConfigDir` resolves to same path as Tauri app (`%APPDATA%\ccswitcher\`)
+- [x] run tests — must pass before task 5
 
 ### Task 5: Core/UserConfig.cs
 
