@@ -265,11 +265,11 @@
 - Modify: `src-tauri/src/main.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] expose commands: `list_accounts`, `switch_account`, `set_proxy`, `get_proxy`, `add_token_account`, `update_account`, `delete_account`, `import_current`, `get_state`
-- [ ] construct platform `deps` (config dir, secret store, credential store) once in app state, behind a single async mutex; all mutating commands acquire it to serialize read-modify-write of `config.json`/`settings.json`
-- [ ] map core errors to a serializable `CommandError` for the frontend
-- [ ] write tests for the error mapping and any command-level glue not covered by core tests
-- [ ] run tests — must pass before next task
+- [x] expose commands: `list_accounts`, `switch_account`, `set_proxy`, `get_proxy`, `add_token_account`, `update_account`, `delete_account`, `import_current`, `get_state`
+- [x] construct platform `deps` (config dir, secret store, credential store) once in app state, behind a single async mutex; all mutating commands acquire it to serialize read-modify-write of `config.json`/`settings.json`
+- [x] map core errors to a serializable `CommandError` for the frontend
+- [x] write tests for the error mapping and any command-level glue not covered by core tests
+- [x] run tests — must pass before next task
 
 ### Task 12: Tray menu
 

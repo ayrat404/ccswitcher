@@ -179,7 +179,7 @@ impl CredentialStore for InMemoryCredentialStore {
 /// - macOS → [`KeychainCredentialStore`] (service [`KEYCHAIN_SERVICE`]).
 /// - Otherwise (Windows/Linux) → [`FileCredentialStore`] at the default
 ///   `~/.claude/.credentials.json` path.
-pub fn default_credential_store() -> Result<Box<dyn CredentialStore>, CredentialStoreError> {
+pub fn default_credential_store() -> Result<Box<dyn CredentialStore + Send + Sync>, CredentialStoreError> {
     #[cfg(target_os = "macos")]
     {
         Ok(Box::new(KeychainCredentialStore::new()))
