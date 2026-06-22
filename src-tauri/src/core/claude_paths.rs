@@ -58,6 +58,17 @@ pub fn user_config_path() -> Result<PathBuf, ClaudePathError> {
     Ok(home.join(USER_CONFIG_FILE_NAME))
 }
 
+/// Candidate locations for Claude Code's user-level config, in priority order:
+/// `~/.claude/.claude.json` first (some installs), then `~/.claude.json` (home).
+/// The caller picks the first one that exists and contains an `oauthAccount`.
+pub fn user_config_candidates() -> Result<Vec<PathBuf>, ClaudePathError> {
+    let home = dirs::home_dir().ok_or(ClaudePathError::NoHomeDir)?;
+    Ok(vec![
+        home.join(CLAUDE_DIR_NAME).join(USER_CONFIG_FILE_NAME),
+        home.join(USER_CONFIG_FILE_NAME),
+    ])
+}
+
 /// Path to `settings.json` inside the given `.claude` base directory.
 ///
 /// Taking the base dir as a parameter keeps the path logic testable without

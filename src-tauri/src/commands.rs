@@ -102,6 +102,10 @@ impl From<SwitchError> for CommandError {
                 kind: CommandErrorKind::CredentialStoreFailed,
                 message: err.to_string(),
             },
+            SwitchError::UserConfig(_) => CommandError {
+                kind: CommandErrorKind::CredentialStoreFailed,
+                message: err.to_string(),
+            },
             SwitchError::Config(_) => CommandError {
                 kind: CommandErrorKind::ConfigFailed,
                 message: err.to_string(),
@@ -328,9 +332,13 @@ pub async fn switch_account(
         .map(|a| a.name.clone())
         .unwrap_or_else(|| "unknown".to_string());
 
+    // Resolve the user-level ~/.claude.json (or ~/.claude/.claude.json) so the
+    // OAuth oauthAccount section can be captured/restored during the switch.
+    let user_config_path = crate::core::user_config::find_user_config();
     let deps = SwitchDeps {
         settings_path: &state.settings_path,
         config_dir: &state.config_dir,
+        user_config_path: user_config_path.as_deref(),
         secret_store: state.secret_store.as_ref(),
         credential_store: state.credential_store.as_ref(),
     };
@@ -641,6 +649,7 @@ pub async fn import_current(
         Ok(ImportResult::Created(account)) => {
             config.accounts.push(account.clone());
             ConfigStore::save(&state.config_dir, &config)?;
+            save_oauth_account_snapshot(&account, state.secret_store.as_ref());
             let _ = emit_success(&app, format_success_message("Account imported", &account.name));
             emit_tray_refresh(&app);
             Ok(ImportResultDto {
@@ -651,6 +660,7 @@ pub async fn import_current(
         Ok(ImportResult::CreatedWithWarning(account, warning)) => {
             config.accounts.push(account.clone());
             ConfigStore::save(&state.config_dir, &config)?;
+            save_oauth_account_snapshot(&account, state.secret_store.as_ref());
             let _ = emit_warning(&app, warning.clone());
             let _ = emit_success(&app, format_success_message("Account imported", &account.name));
             emit_tray_refresh(&app);
@@ -765,6 +775,28 @@ fn emit_warning(app: &AppHandle, message: String) -> Result<(), Box<dyn std::err
 /// tray menu from the current config on receipt.
 fn emit_tray_refresh(app: &AppHandle) {
     let _ = app.emit("tray_refresh", ());
+}
+
+/// Capture the live `oauthAccount` section of `~/.claude.json` into the keyring
+/// for a freshly-imported OAuth account, so the first switch to it can restore
+/// the right account details (email, org, …). Token accounts are skipped.
+/// Best-effort: any read/parse failure is ignored (the switcher will capture
+/// it on the next switch-out).
+fn save_oauth_account_snapshot(account: &Account, secret_store: &dyn SecretStore) {
+    use crate::core::user_config;
+    if account.account_type != AccountType::AnthropicOauth {
+        return;
+    }
+    let Some(uc_path) = user_config::find_user_config() else {
+        return;
+    };
+    let Ok(Some(oauth)) = user_config::read_oauth_account(&uc_path) else {
+        return;
+    };
+    let Ok(serialized) = serde_json::to_string(&oauth) else {
+        return;
+    };
+    let _ = secret_store.set(&user_config::oauth_account_key(&account.id), &serialized);
 }
 
 #[cfg(test)]

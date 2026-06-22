@@ -36,6 +36,9 @@ use super::env_builder::{build_env, EnvBuilderError};
 use super::model::{AccountType, AppConfig};
 use super::secret_store::{SecretStore, SecretStoreError};
 use super::settings_env::{load_settings, merge_env, SettingsEnvError};
+use super::user_config;
+
+use serde_json::Value;
 
 use std::path::{Path, PathBuf};
 
@@ -58,6 +61,9 @@ pub enum SwitchError {
     /// Reading or writing the OAuth credential store failed.
     #[error(transparent)]
     Credential(#[from] CredentialStoreError),
+    /// Reading or merging the user-level config (`oauthAccount`) failed.
+    #[error(transparent)]
+    UserConfig(#[from] user_config::UserConfigError),
     /// Persisting the updated `config.json` failed.
     #[error(transparent)]
     Config(#[from] ConfigStoreError),
@@ -77,6 +83,10 @@ pub struct SwitchDeps<'a> {
     pub settings_path: &'a Path,
     /// Directory holding ccswitcher's own `config.json` (persisted last).
     pub config_dir: &'a Path,
+    /// Path to the user-level `~/.claude.json` (or `~/.claude/.claude.json`),
+    /// used to capture/restore the `oauthAccount` section for OAuth accounts.
+    /// `None` when no user config exists yet (capture/restore is skipped).
+    pub user_config_path: Option<&'a Path>,
     /// OS keyring for per-account secrets (token strings, OAuth snapshots).
     pub secret_store: &'a dyn SecretStore,
     /// Claude Code's OAuth credential store (snapshot/restore).
@@ -112,8 +122,9 @@ pub fn apply_account(
 
     // --- Step 1: capture-on-switch-out -------------------------------------
     // If the currently-active account is OAuth, re-snapshot its live credential
-    // blob into the keyring so refreshed tokens are preserved. This keyring
-    // write is intentional and is never rolled back, even if a later step fails.
+    // blob AND its `oauthAccount` section into the keyring so refreshed tokens
+    // and any account-detail changes are preserved. These keyring writes are
+    // intentional and are never rolled back, even if a later step fails.
     if let Some(active_id) = config.active_account_id.clone() {
         // Only capture for a *different*, still-existing, OAuth active account.
         let active_is_oauth = config
@@ -127,6 +138,14 @@ pub fn apply_account(
                 deps.secret_store.set(&active_id, &live)?;
             }
             // Missing live blob → skip silently (nothing to capture).
+            // Also re-snapshot the live oauthAccount section of ~/.claude.json.
+            if let Some(uc_path) = deps.user_config_path {
+                if let Ok(Some(oauth)) = user_config::read_oauth_account(uc_path) {
+                    if let Ok(serialized) = serde_json::to_string(&oauth) {
+                        let _ = deps.secret_store.set(&user_config::oauth_account_key(&active_id), &serialized);
+                    }
+                }
+            }
         }
     }
 
@@ -160,6 +179,17 @@ pub fn apply_account(
         }
         // No snapshot stored yet → nothing to restore (e.g. a freshly-imported
         // account whose blob has not been captured). The switch still succeeds.
+
+        // Restore the oauthAccount section into ~/.claude.json (merge only —
+        // the rest of the file is the user's own). Best-effort: a failure here
+        // must not fail the whole switch.
+        if let Some(uc_path) = deps.user_config_path {
+            if let Ok(Some(stored)) = deps.secret_store.get(&user_config::oauth_account_key(account_id)) {
+                if let Ok(oauth) = serde_json::from_str::<Value>(&stored) {
+                    let _ = user_config::merge_oauth_account(uc_path, &oauth);
+                }
+            }
+        }
     }
 
     // --- Step 7: persist config (managed_keys + active_account_id) ----------
@@ -253,6 +283,7 @@ mod tests {
             SwitchDeps {
                 settings_path: &self.settings_path,
                 config_dir: &self.config_dir,
+                user_config_path: None,
                 secret_store: &self.secrets,
                 credential_store: &self.creds,
             }
@@ -458,6 +489,7 @@ mod tests {
         let deps = SwitchDeps {
             settings_path: &settings_path,
             config_dir: config_dir.path(),
+            user_config_path: None,
             secret_store: &secrets,
             credential_store: &failing,
         };
@@ -486,6 +518,7 @@ mod tests {
         let deps2 = SwitchDeps {
             settings_path: &settings_path,
             config_dir: config_dir.path(),
+            user_config_path: None,
             secret_store: &secrets,
             credential_store: &working,
         };
@@ -518,4 +551,57 @@ mod tests {
         assert!(!clear_active_if_missing(&mut cfg));
         assert_eq!(cfg.active_account_id, None);
     }
+
+    #[test]
+    fn oauth_switch_captures_and_restores_user_config_oauth_account() {
+        // Two OAuth accounts. Live ~/.claude.json currently holds account A's
+        // oauthAccount; account B's snapshot is in the keyring.
+        let settings_dir = tempfile::tempdir().unwrap();
+        let config_dir = tempfile::tempdir().unwrap();
+        let settings_path = settings_dir.path().join("settings.json");
+        let user_config = settings_dir.path().join(".claude.json");
+        std::fs::write(
+            &user_config,
+            r#"{"userID":"keep-me","oauthAccount":{"accountUuid":"A","emailAddress":"a@x"}}"#,
+        )
+        .unwrap();
+
+        let secrets = InMemorySecretStore::new();
+        let creds = InMemoryCredentialStore::new();
+        secrets
+            .set(
+                &user_config::oauth_account_key("b"),
+                r#"{"accountUuid":"B","emailAddress":"b@x"}"#,
+            )
+            .unwrap();
+
+        let mut cfg = config_with(vec![oauth_account("a", None), oauth_account("b", None)]);
+        cfg.active_account_id = Some("a".to_string());
+
+        let deps = SwitchDeps {
+            settings_path: &settings_path,
+            config_dir: config_dir.path(),
+            user_config_path: Some(&user_config),
+            secret_store: &secrets,
+            credential_store: &creds,
+        };
+
+        // Switch A -> B.
+        apply_account(&mut cfg, "b", &deps).unwrap();
+
+        // Capture-on-switch-out: A's live oauthAccount was snapshotted to keyring.
+        let captured_a = secrets
+            .get(&user_config::oauth_account_key("a"))
+            .unwrap()
+            .unwrap();
+        assert!(captured_a.contains(r#""accountUuid":"A""#));
+
+        // Restore-on-switch-in: B's oauthAccount merged into ~/.claude.json.
+        let after: Value =
+            serde_json::from_str(&std::fs::read_to_string(&user_config).unwrap()).unwrap();
+        assert_eq!(after["oauthAccount"]["accountUuid"], Value::String("B".into()));
+        // Other fields preserved.
+        assert_eq!(after["userID"], Value::String("keep-me".into()));
+    }
+
 }

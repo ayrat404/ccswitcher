@@ -27,3 +27,4 @@ pub mod proxy;
 pub mod secret_store;
 pub mod settings_env;
 pub mod switcher;
+pub mod user_config;
