@@ -126,6 +126,7 @@ fn main() {
             ccswitcher_lib::commands::list_accounts,
             ccswitcher_lib::commands::switch_account,
             ccswitcher_lib::commands::set_proxy_enabled,
+            ccswitcher_lib::commands::set_proxy,
             ccswitcher_lib::commands::get_proxy,
             ccswitcher_lib::commands::add_token_account,
             ccswitcher_lib::commands::update_account,
@@ -176,10 +177,16 @@ fn main() {
                 });
             });
 
-            // Listen for tray_switch_account event and invoke the command
+            // Listen for tray_switch_account event and invoke the command.
+            // The payload is a JSON-serialized string (e.g. "\"uuid\""), so we
+            // must deserialize it — using event.payload().to_string() verbatim
+            // would include the surrounding quotes and the account would never
+            // be found.
             let app_handle = app.handle().clone();
             app.listen("tray_switch_account", move |event| {
-                let account_id = event.payload().to_string();
+                let payload = event.payload();
+                let account_id = serde_json::from_str::<String>(payload)
+                    .unwrap_or_else(|_| payload.to_string());
                 let handle = app_handle.clone();
 
                 tauri::async_runtime::spawn(async move {
@@ -198,6 +205,32 @@ fn main() {
                 });
             });
 
+            // Listen for tray_refresh: rebuild the tray menu after account
+            // list changes (add/update/delete/import) emitted by the commands.
+            let app_handle = app.handle().clone();
+            app.listen("tray_refresh", move |_event| {
+                let handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+                    let config = state.mutex.lock().await.clone();
+                    let _ = ccswitcher_lib::tray::update_tray_icon(&handle, &config);
+                });
+            });
+
+            // Listen for tray_import: show the settings window and ask its UI
+            // to open the "import current login" name dialog. The actual import
+            // command (which needs a profile name) is invoked from the frontend
+            // after the user confirms the name.
+            let app_handle = app.handle().clone();
+            app.listen("tray_import", move |_event| {
+                if let Some(settings_window) = app_handle.get_webview_window("settings") {
+                    let _ = settings_window.show();
+                    let _ = settings_window.set_focus();
+                    // Tell the settings UI to open the import name dialog.
+                    let _ = app_handle.emit_to("settings", "show_import_dialog", ());
+                }
+            });
+
             #[cfg(debug_assertions)]
             {
                 if let Some(window) = app.get_webview_window("main") {
@@ -205,6 +238,17 @@ fn main() {
                 }
             }
             Ok(())
+        })
+        // Keep the settings window alive when the user closes it: hide instead
+        // of destroy, so the app (driven by the tray) keeps running. Without
+        // this, closing the settings window would exit the whole app.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "settings" {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running ccswitcher");

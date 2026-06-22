@@ -219,7 +219,6 @@ impl From<SettingsEnvError> for CommandError {
 pub struct AccountDto {
     pub id: String,
     pub name: String,
-    #[serde(rename = "type")]
     pub account_type: String,
     pub base_url: Option<String>,
     pub auth_kind: Option<String>,
@@ -285,6 +284,17 @@ pub struct UpdateAccountParams {
     pub base_url: Option<String>,
     pub extra_env: Option<BTreeMap<String, String>>,
     pub secret: Option<String>,
+}
+
+/// Parameters for setting the global proxy (URL, no_proxy, enabled).
+///
+/// `url` and `no_proxy` are optional so a caller can update only the enable
+/// flag; omitting them keeps the existing values.
+#[derive(Debug, serde::Deserialize)]
+pub struct SetProxyParams {
+    pub url: Option<String>,
+    pub no_proxy: Option<String>,
+    pub enabled: bool,
 }
 
 /// Result of an import operation.
@@ -376,6 +386,49 @@ pub async fn get_proxy(state: State<'_, AppState>) -> Result<ProxySettings, Comm
     Ok(config.proxy.clone())
 }
 
+/// Set the global proxy: URL, no_proxy, and enabled flag in one call.
+///
+/// Updates `config.proxy.{url,no_proxy,enabled}`, then re-applies the active
+/// account's env so the new URL/no_proxy land in `settings.json` (when a proxy
+/// is enabled). Emits a tray refresh so the menu label reflects the new URL.
+#[tauri::command]
+pub async fn set_proxy(
+    params: SetProxyParams,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let mut config = state.mutex.lock().await;
+
+    // Update URL/no_proxy first; apply_proxy_enabled rebuilds the active
+    // account's env using the FULL config.proxy, so the new values propagate.
+    if let Some(url) = params.url {
+        config.proxy.url = url;
+    }
+    if let Some(no_proxy) = params.no_proxy {
+        config.proxy.no_proxy = no_proxy;
+    }
+
+    let deps = ProxyDeps {
+        settings_path: &state.settings_path,
+        config_dir: &state.config_dir,
+        secret_store: state.secret_store.as_ref(),
+    };
+
+    let proxy_url = config.proxy.url.clone();
+    match apply_proxy_enabled(&mut config, params.enabled, &deps) {
+        Ok(()) => {
+            let status = if params.enabled { "enabled" } else { "disabled" };
+            let _ = emit_success(&app, format!("Proxy {}: {}", status, proxy_url));
+            emit_tray_refresh(&app);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = emit_error(&app, format_error_message("set proxy", &e.to_string()));
+            Err(e.into())
+        }
+    }
+}
+
 /// Add a new token-based account.
 #[tauri::command]
 pub async fn add_token_account(
@@ -429,6 +482,7 @@ pub async fn add_token_account(
     }
 
     let _ = emit_success(&app, format_success_message("Account added", &params.name));
+    emit_tray_refresh(&app);
 
     Ok(AccountDto::from(
         config.accounts.iter().find(|a| a.id == id).unwrap().clone(),
@@ -490,6 +544,7 @@ pub async fn update_account(
 
     let account_name = updated_account.name.clone();
     let _ = emit_success(&app, format_success_message("Account updated", &account_name));
+    emit_tray_refresh(&app);
 
     Ok(AccountDto::from(updated_account))
 }
@@ -543,6 +598,7 @@ pub async fn delete_account(
     }
 
     let _ = emit_success(&app, format_success_message("Account deleted", &account_name.unwrap()));
+    emit_tray_refresh(&app);
 
     Ok(())
 }
@@ -585,6 +641,7 @@ pub async fn import_current(
             config.accounts.push(account.clone());
             ConfigStore::save(&state.config_dir, &config)?;
             let _ = emit_success(&app, format_success_message("Account imported", &account.name));
+            emit_tray_refresh(&app);
             Ok(ImportResultDto {
                 account: AccountDto::from(account),
                 warning: None,
@@ -595,6 +652,7 @@ pub async fn import_current(
             ConfigStore::save(&state.config_dir, &config)?;
             let _ = emit_warning(&app, warning.clone());
             let _ = emit_success(&app, format_success_message("Account imported", &account.name));
+            emit_tray_refresh(&app);
             Ok(ImportResultDto {
                 account: AccountDto::from(account),
                 warning: Some(warning),
@@ -699,6 +757,13 @@ fn emit_error(app: &AppHandle, message: String) -> Result<(), Box<dyn std::error
 fn emit_warning(app: &AppHandle, message: String) -> Result<(), Box<dyn std::error::Error>> {
     app.emit("notification", NotificationEvent::Warning { message })?;
     Ok(())
+}
+
+/// Signal the tray to rebuild its menu after a state change that affects the
+/// account list (add/update/delete/import). The main.rs listener rebuilds the
+/// tray menu from the current config on receipt.
+fn emit_tray_refresh(app: &AppHandle) {
+    let _ = app.emit("tray_refresh", ());
 }
 
 #[cfg(test)]

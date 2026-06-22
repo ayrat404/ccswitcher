@@ -19,11 +19,6 @@
         "url": "settings.html"
       }
     ],
-    "trayIcon": {
-      "id": "main",
-      "iconPath": "icons/icon.png",
-      "tooltip": "ccswitcher"
-    },
     "security": {
       "csp": null
     }

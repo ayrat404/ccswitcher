@@ -206,6 +206,20 @@
     }
   }
 
+  // Set the full proxy config (URL + no_proxy + enabled). This is what the
+  // "Save Proxy Settings" form submits — the separate set_proxy_enabled
+  // command only flips the flag and would not persist a changed URL/no_proxy.
+  async function setProxy(params) {
+    try {
+      hideMessage();
+      await invoke('set_proxy', { params });
+      await loadState(); // Reload proxy form + accounts
+      showMessage('Proxy settings saved');
+    } catch (err) {
+      showError(err);
+    }
+  }
+
   // === Rendering ===
 
   function renderAccounts() {
@@ -316,10 +330,16 @@
     els.accountId.value = '';
     els.accountName.value = '';
     els.baseUrl.value = '';
+    // Reset controls that openEditAccountModal may have disabled/hidden for
+    // OAuth accounts — otherwise Add shows a disabled auth-kind select and no
+    // token field after editing an OAuth account.
+    els.authKind.disabled = false;
     els.authKind.value = 'auth_token';
     els.token.value = '';
     els.token.required = true;
     els.token.placeholder = 'sk-ant-...';
+    const tokenGroup = els.token.closest('.form-group');
+    if (tokenGroup) tokenGroup.style.display = '';
     setExtraEnvValues({});
     showModal(els.accountModal);
   }
@@ -386,15 +406,18 @@
   function handleProxySubmit(e) {
     e.preventDefault();
 
-    // Update the proxy settings in state
-    const wasEnabled = els.proxyEnabled.checked;
-    const newEnabled = els.proxyEnabled.checked;
+    // Send URL + no_proxy + enabled together. The previous logic compared
+    // `els.proxyEnabled.checked` against itself (always equal), so the form
+    // never persisted anything — least of all a changed URL/no_proxy.
+    const url = els.proxyUrl.value.trim();
+    const noProxy = els.noProxy.value.trim();
+    const enabled = els.proxyEnabled.checked;
 
-    if (wasEnabled !== newEnabled) {
-      setProxyEnabled(newEnabled);
-    } else {
-      showMessage('Proxy settings saved');
-    }
+    setProxy({
+      url: url || null,
+      no_proxy: noProxy || null,
+      enabled
+    });
   }
 
   function handleImportSubmit(e) {
@@ -409,6 +432,17 @@
   function init() {
     // Load initial state
     loadState();
+
+    // Listen for import requests triggered from the tray menu
+    // (tray → main.rs emits "show_import_dialog" to this window).
+    const eventApi = tauri?.event;
+    if (eventApi?.listen) {
+      eventApi.listen('show_import_dialog', () => {
+        els.importName.value = '';
+        showModal(els.importModal);
+        els.importName.focus();
+      });
+    }
 
     // Account buttons
     els.addTokenAccountBtn.addEventListener('click', openAddAccountModal);

@@ -204,13 +204,22 @@ pub fn create_tray<R: Runtime>(
         "ccswitcher".to_string()
     };
 
-    // Create the tray icon using with_id to set the ID
-    // The icon is configured in tauri.conf.json (trayIcon.iconPath)
-    TrayIconBuilder::with_id("main")
+    // Create the single tray icon. We create it in code (rather than via the
+    // `trayIcon` key in tauri.conf.json) so the icon and the menu are owned by
+    // one tray instance — declaring it in the config AND creating it here would
+    // produce two tray icons (one with an icon but no menu, one with a menu but
+    // no icon).
+    let mut builder = TrayIconBuilder::with_id("main")
         .icon_as_template(false)
         .menu(&menu)
-        .tooltip(&tooltip)
-        .build(app_handle)?;
+        .tooltip(&tooltip);
+
+    // Attach the bundled app icon (from tauri.conf.json `bundle.icon`).
+    if let Some(icon) = app_handle.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+
+    builder.build(app_handle)?;
 
     Ok(())
 }
