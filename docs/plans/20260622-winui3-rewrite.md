@@ -205,10 +205,10 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/CredentialStore.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/CredentialStoreTests.cs`
 
-- [ ] define `ICredentialStore` interface: `Read() → string?`, `Write(blob)`
-- [ ] implement `FileCredentialStore`: reads/writes `~/.claude/.credentials.json` atomically (backup + temp + rename)
-- [ ] implement `InMemoryCredentialStore` for tests
-- [ ] write tests: read missing returns null; write+read round-trip; atomic write leaves no `.tmp`; backup created on write
+- [x] define `ICredentialStore` interface: `Read() → string?`, `Write(blob)`
+- [x] implement `FileCredentialStore`: reads/writes `~/.claude/.credentials.json` atomically (backup + temp + rename)
+- [x] implement `InMemoryCredentialStore` for tests
+- [x] write tests: read missing returns null; write+read round-trip; atomic write leaves no `.tmp`; backup created on write
 - [ ] run tests — must pass before task 8
 
 ### Task 8: Core/SettingsEnv.cs
