@@ -128,12 +128,12 @@
 - Create: `.gitignore`
 - Create: `README.md`
 
-- [ ] scaffold a Tauri 2 project (tray-enabled) with a minimal web frontend (vanilla HTML/JS, no heavy framework)
-- [ ] add Rust deps: `serde`, `serde_json`, `uuid`, `keyring`, `dirs`, `thiserror`, `tempfile` (backup timestamps use `std::time::SystemTime` epoch millis — sortable, no date crate needed)
-- [ ] configure `tauri.conf.json` for tray icon + a hidden settings window + notifications
-- [ ] create `src-tauri/src/core/mod.rs` module skeleton (empty submodules referenced by later tasks)
-- [ ] seed `CLAUDE.md` with the core/adapter architecture and the two invariants ("app owns only managed keys", "capture-on-switch-out for OAuth")
-- [ ] verify `cargo build` succeeds and `cargo test` runs (0 tests) — must pass before next task
+- [x] scaffold a Tauri 2 project (tray-enabled) with a minimal web frontend (vanilla HTML/JS, no heavy framework)
+- [x] add Rust deps: `serde`, `serde_json`, `uuid`, `keyring`, `dirs`, `thiserror`, `tempfile` (backup timestamps use `std::time::SystemTime` epoch millis — sortable, no date crate needed)
+- [x] configure `tauri.conf.json` for tray icon + a hidden settings window + notifications
+- [x] create `src-tauri/src/core/mod.rs` module skeleton (empty submodules referenced by later tasks)
+- [x] seed `CLAUDE.md` with the core/adapter architecture and the two invariants ("app owns only managed keys", "capture-on-switch-out for OAuth")
+- [x] verify `cargo build` succeeds and `cargo test` runs (0 tests) — must pass before next task
 
 ### Task 2: Core data model
 
