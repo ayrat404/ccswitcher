@@ -17,6 +17,8 @@
 //! introduced as each module lands.
 
 pub mod atomic;
+pub mod claude_paths;
 pub mod config_store;
 pub mod model;
 pub mod secret_store;
+pub mod settings_env;

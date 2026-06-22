@@ -182,13 +182,13 @@
 - Create: `src-tauri/src/core/settings_env.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] implement path resolution for `~/.claude/settings.json` and `~/.claude/.credentials.json`
-- [ ] implement `load_settings(path) -> Result<Value>` (missing → `{}`; invalid JSON → typed error, do NOT overwrite)
-- [ ] expose a constant `MANAGED_KEYS` set (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, HTTP_PROXY, HTTPS_PROXY, NO_PROXY)
-- [ ] implement `merge_env(settings, old_managed_keys, new_env) -> (settings, new_managed_keys)`: strip the **union** of `MANAGED_KEYS` and `old_managed_keys` from `env`, insert `new_env`, preserve all other env keys and all non-`env` settings
-- [ ] write tests: user-set env key survives a switch; old managed key removed when not in new set; stale managed key removed even when `old_managed_keys` is empty (first-switch robustness); non-env settings untouched
-- [ ] write tests: invalid-JSON settings returns error and leaves input unmodified
-- [ ] run tests — must pass before next task
+- [x] implement path resolution for `~/.claude/settings.json` and `~/.claude/.credentials.json`
+- [x] implement `load_settings(path) -> Result<Value>` (missing → `{}`; invalid JSON → typed error, do NOT overwrite)
+- [x] expose a constant `MANAGED_KEYS` set (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, HTTP_PROXY, HTTPS_PROXY, NO_PROXY)
+- [x] implement `merge_env(settings, old_managed_keys, new_env) -> (settings, new_managed_keys)`: strip the **union** of `MANAGED_KEYS` and `old_managed_keys` from `env`, insert `new_env`, preserve all other env keys and all non-`env` settings
+- [x] write tests: user-set env key survives a switch; old managed key removed when not in new set; stale managed key removed even when `old_managed_keys` is empty (first-switch robustness); non-env settings untouched
+- [x] write tests: invalid-JSON settings returns error and leaves input unmodified
+- [x] run tests — must pass before next task
 
 ### Task 6: Credentials store adapter (OAuth snapshot/restore) with mock
 
