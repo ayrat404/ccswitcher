@@ -22,6 +22,11 @@ pub const SETTINGS_FILE_NAME: &str = "settings.json";
 /// File name of the Claude Code credential store (Windows/Linux).
 pub const CREDENTIALS_FILE_NAME: &str = ".credentials.json";
 
+/// File name of Claude Code's user-level config (lives in the home dir, not
+/// under `~/.claude/`). Holds stable account identifiers (`oauthAccount`:
+/// `accountUuid`, `emailAddress`) used for duplicate detection on import.
+pub const USER_CONFIG_FILE_NAME: &str = ".claude.json";
+
 /// Errors raised while resolving Claude Code paths.
 #[derive(Debug, Error)]
 pub enum ClaudePathError {
@@ -44,6 +49,13 @@ pub fn settings_path() -> Result<PathBuf, ClaudePathError> {
 /// Path to `.credentials.json` inside the default `~/.claude` directory.
 pub fn credentials_path() -> Result<PathBuf, ClaudePathError> {
     Ok(credentials_path_in(claude_dir()?))
+}
+
+/// Path to the user-level `~/.claude.json` config (in the home dir, not under
+/// `~/.claude/`). Holds stable account identity fields used for dedup on import.
+pub fn user_config_path() -> Result<PathBuf, ClaudePathError> {
+    let home = dirs::home_dir().ok_or(ClaudePathError::NoHomeDir)?;
+    Ok(home.join(USER_CONFIG_FILE_NAME))
 }
 
 /// Path to `settings.json` inside the given `.claude` base directory.

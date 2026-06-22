@@ -615,6 +615,7 @@ pub async fn import_current(
     // Detect the current login.
     let deps = ImportDeps {
         settings_path: Some(state.settings_path.clone()),
+        user_config_path: None,
         credential_store: state.credential_store.as_ref(),
         secret_store: state.secret_store.as_ref(),
     };

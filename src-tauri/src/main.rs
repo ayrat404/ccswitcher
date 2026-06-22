@@ -128,6 +128,15 @@ fn main() {
 
     tauri::Builder::default()
         .manage(app_state)
+        // Keep a single running instance: a second launch focuses the existing
+        // app instead of starting a new one (avoids double tray icons / lock
+        // contention on config.json). Must be the first plugin.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("settings") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,

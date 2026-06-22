@@ -14,8 +14,9 @@
 //! our own injected values.
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -106,6 +107,10 @@ pub enum ImportResult {
 pub struct ImportDeps<'a> {
     /// Path to Claude Code's `settings.json`. If `None`, uses the default path.
     pub settings_path: Option<PathBuf>,
+    /// Path to Claude Code's user-level `~/.claude.json`. If `None`, uses the
+    /// default path. Read for stable account identity (accountUuid/email) used
+    /// in OAuth duplicate detection.
+    pub user_config_path: Option<PathBuf>,
     /// Credential store reader (for OAuth detection).
     pub credential_store: &'a dyn CredentialStore,
     /// Secret store writer (for persisting imported secrets).
@@ -120,6 +125,13 @@ impl ImportDeps<'_> {
         } else {
             Ok(settings_path()?)
         }
+    }
+
+    /// Resolve the user-config (`~/.claude.json`) path (default if not provided).
+    fn resolve_user_config_path(&self) -> PathBuf {
+        self.user_config_path
+            .clone()
+            .unwrap_or_else(|| super::claude_paths::user_config_path().unwrap_or_default())
     }
 }
 
@@ -189,8 +201,11 @@ pub fn detect_current(
     // No non-managed token key → fall back to OAuth credential store.
     match deps.credential_store.read() {
         Ok(Some(blob)) => {
-            // Try to extract a stable identity from the blob.
-            let identity = extract_identity(&blob);
+            // Identity: prefer the stable accountUuid/emailAddress from the
+            // user-level ~/.claude.json (oauthAccount object); fall back to any
+            // identity embedded in the blob itself.
+            let identity = extract_identity_from_user_config_at(&deps.resolve_user_config_path())
+                .or_else(|| extract_identity(&blob));
             Ok(Some(ImportCandidate::Oauth {
                 blob,
                 identity,
@@ -227,6 +242,62 @@ fn extract_identity(blob: &str) -> Option<String> {
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
+}
+
+/// Extract a stable identity from Claude Code's user-level `~/.claude.json`.
+///
+/// The file holds an `oauthAccount` object with stable fields `accountUuid`
+/// (preferred) and `emailAddress`. These do not change across token refreshes,
+/// unlike the credential blob, so they make a reliable duplicate key.
+fn extract_identity_from_user_config(content: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(content).ok()?;
+    let oauth = parsed.get("oauthAccount").and_then(Value::as_object)?;
+    oauth
+        .get("accountUuid")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            oauth
+                .get("emailAddress")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+/// Read `~/.claude.json` from `path` and extract its identity, or `None` if the
+/// file is missing or has no recognizable identity field.
+fn extract_identity_from_user_config_at(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    extract_identity_from_user_config(&content)
+}
+
+/// Credential-blob fields that change over a session and must NOT take part in
+/// duplicate comparison. Removing them yields a stable "fingerprint" of the
+/// login itself.
+const VOLATILE_BLOB_FIELDS: &[&str] = &[
+    "accessToken",
+    "refreshToken",
+    "expiresAt",
+    "expiresAtTimestamp",
+    "tokenResponse",
+    "idToken",
+];
+
+/// Normalize an OAuth credential blob into a canonical, comparable string.
+///
+/// Strips the volatile fields (`accessToken`, `refreshToken`, expiry, token
+/// response) so that two snapshots of the *same* login — taken before and
+/// after Claude Code refreshes its tokens in place — compare equal. Returns
+/// `None` if the blob isn't valid JSON. Key order is canonical because
+/// `serde_json` (without `preserve_order`) backs objects with a `BTreeMap`.
+fn normalize_blob(blob: &str) -> Option<String> {
+    let mut parsed: Value = serde_json::from_str(blob).ok()?;
+    if let Some(oauth) = parsed.get_mut("claudeAiOauth").and_then(Value::as_object_mut) {
+        for key in VOLATILE_BLOB_FIELDS {
+            oauth.remove(*key);
+        }
+    }
+    Some(parsed.to_string())
 }
 
 /// Generate a default display name for an import candidate.
@@ -322,13 +393,13 @@ pub fn import(
             (account, secret, warning)
         }
         ImportCandidate::Oauth { blob, identity } => {
-            // Check for duplicate OAuth accounts (only when identity is known).
-            let warning = if let Some(ref id) = identity {
+            // 1. Identity-based dedup (only when a stable identity is known).
+            let mut warning = if let Some(ref ident) = identity {
                 existing_accounts
                     .iter()
                     .find(|acc| {
                         acc.account_type == AccountType::AnthropicOauth
-                            && acc.identity.as_deref() == Some(id)
+                            && acc.identity.as_deref() == Some(ident)
                     })
                     .map(|dup| {
                         format!(
@@ -339,6 +410,29 @@ pub fn import(
             } else {
                 None
             };
+
+            // 2. Blob-based dedup: compare a normalized fingerprint (volatile
+            //    token/expiry fields stripped) against each existing OAuth
+            //    account's stored blob. This catches the same login even when
+            //    no identity field was extractable.
+            if warning.is_none() {
+                if let Some(norm) = normalize_blob(&blob) {
+                    for acc in existing_accounts
+                        .iter()
+                        .filter(|a| a.account_type == AccountType::AnthropicOauth)
+                    {
+                        if let Ok(Some(stored)) = secret_store.get(&acc.id) {
+                            if normalize_blob(&stored).as_deref() == Some(norm.as_str()) {
+                                warning = Some(format!(
+                                    "An account with the same login ({}) already exists.",
+                                    acc.name
+                                ));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
 
             let account = Account {
                 id: id.clone(),
@@ -391,6 +485,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -409,6 +504,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -434,6 +530,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -459,6 +556,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -476,6 +574,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -494,6 +593,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -512,6 +612,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -534,6 +635,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -556,6 +658,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -775,8 +878,63 @@ mod tests {
 
         let store = InMemorySecretStore::new();
         let result = import(candidate, "Another OAuth", &existing, &store).unwrap();
-        // Should NOT warn — identity-based dedup is skipped when identity is None.
+        // No warning: identity is None AND the existing account has no stored
+        // blob to compare against (empty keyring), so dedup has nothing to match.
         assert!(matches!(result, ImportResult::Created(_)));
+    }
+
+    #[test]
+    fn import_oauth_duplicate_by_blob_returns_warning() {
+        // Same login (identity absent), different access tokens — the
+        // normalized fingerprint still matches, so this is a duplicate.
+        let candidate = ImportCandidate::Oauth {
+            blob: r#"{"claudeAiOauth":{"accessToken":"fresh","refreshToken":"r","expiresAt":999}}"#
+                .to_string(),
+            identity: None,
+        };
+
+        let existing = vec![Account {
+            id: "old-id".to_string(),
+            name: "Old OAuth".to_string(),
+            account_type: AccountType::AnthropicOauth,
+            base_url: None,
+            auth_kind: None,
+            identity: None,
+            extra_env: Default::default(),
+        }];
+
+        // The existing account's blob is in the keyring with different volatile
+        // values but the same stable fields.
+        let store = InMemorySecretStore::new();
+        store
+            .set("old-id", r#"{"claudeAiOauth":{"accessToken":"stale","expiresAt":1}}"#)
+            .unwrap();
+
+        let result = import(candidate, "Dup OAuth", &existing, &store).unwrap();
+        match result {
+            ImportResult::CreatedWithWarning(_, warning) => {
+                assert!(warning.contains("Old OAuth"));
+                assert!(warning.contains("already exists"));
+            }
+            _ => panic!("expected CreatedWithWarning for duplicate blob"),
+        }
+    }
+
+    #[test]
+    fn normalize_blob_strips_volatile_fields() {
+        let a = normalize_blob(r#"{"claudeAiOauth":{"accessToken":"x","expiresAt":1,"email":"u@x"}}"#);
+        let b = normalize_blob(r#"{"claudeAiOauth":{"expiresAt":2,"accessToken":"y","email":"u@x"}}"#);
+        // Volatile fields removed, stable field kept, key order canonical.
+        assert_eq!(a, b);
+        assert_eq!(
+            a.as_deref(),
+            Some(r#"{"claudeAiOauth":{"email":"u@x"}}"#)
+        );
+    }
+
+    #[test]
+    fn normalize_blob_returns_none_for_invalid_json() {
+        assert_eq!(normalize_blob("not json"), None);
     }
 
     #[test]
@@ -802,6 +960,65 @@ mod tests {
     }
 
     #[test]
+    fn extract_identity_from_user_config_prefers_account_uuid() {
+        let content = r#"{"userID":"u","oauthAccount":{"accountUuid":"acc-uuid","emailAddress":"u@x.com"}}"#;
+        assert_eq!(
+            extract_identity_from_user_config(content),
+            Some("acc-uuid".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_identity_from_user_config_falls_back_to_email() {
+        let content = r#"{"oauthAccount":{"emailAddress":"u@x.com"}}"#;
+        assert_eq!(
+            extract_identity_from_user_config(content),
+            Some("u@x.com".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_identity_from_user_config_none_when_no_oauth_account() {
+        assert_eq!(extract_identity_from_user_config(r#"{"userID":"u"}"#), None);
+        assert_eq!(extract_identity_from_user_config("not json"), None);
+    }
+
+    #[test]
+    fn detect_current_uses_user_config_for_oauth_identity() {
+        // credential blob has no identity, but ~/.claude.json (oauthAccount)
+        // provides a stable accountUuid used for dedup.
+        let (temp, settings_path) = setup_settings(r#"{"env":{}}"#);
+        let user_config = temp.path().join(".claude.json");
+        fs::write(
+            &user_config,
+            r#"{"oauthAccount":{"accountUuid":"acc-uuid","emailAddress":"u@x.com"}}"#,
+        )
+        .unwrap();
+
+        let creds = InMemoryCredentialStore::new();
+        creds
+            .write(r#"{"claudeAiOauth":{"accessToken":"a"}}"#)
+            .unwrap();
+
+        let deps = ImportDeps {
+            settings_path: Some(settings_path),
+            user_config_path: Some(user_config),
+            credential_store: &creds,
+            secret_store: &InMemorySecretStore::new(),
+        };
+
+        let result = detect_current(&[], &deps).unwrap();
+        match result {
+            Some(ImportCandidate::Oauth { identity, .. }) => {
+                assert_eq!(identity, Some("acc-uuid".to_string()));
+            }
+            _ => panic!("expected OAuth candidate"),
+        }
+
+        drop(temp);
+    }
+
+    #[test]
     fn constant_managed_keys_not_used_for_ignore() {
         // Confirm that ONLY config.managed_keys is used, not the constant MANAGED_KEYS.
         // When managed_keys is empty, we should detect a token even though AUTH_TOKEN
@@ -813,6 +1030,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
@@ -834,6 +1052,7 @@ mod tests {
 
         let deps = ImportDeps {
             settings_path: Some(settings_path),
+            user_config_path: None,
             credential_store: &creds,
             secret_store: &InMemorySecretStore::new(),
         };
