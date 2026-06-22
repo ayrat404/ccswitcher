@@ -193,11 +193,11 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/SecretStore.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/SecretStoreTests.cs`
 
-- [ ] define `ISecretStore` interface: `Set(id, value)`, `Get(id) → string?`, `Delete(id)`
-- [ ] implement `PasswordVaultSecretStore`: service = `"ccswitcher"`, resource = account id; catch `COMException` / `Exception` on missing entry (returns null from `Get`)
-- [ ] implement `InMemorySecretStore` (Dictionary-backed) for tests
-- [ ] write tests against `InMemorySecretStore`: set+get round-trip, get missing returns null, delete removes, set overwrites
-- [ ] run tests — must pass before task 7
+- [x] define `ISecretStore` interface: `Set(id, value)`, `Get(id) → string?`, `Delete(id)`
+- [x] implement `PasswordVaultSecretStore`: service = `"ccswitcher"`, resource = account id; catch `COMException` / `Exception` on missing entry (returns null from `Get`)
+- [x] implement `InMemorySecretStore` (Dictionary-backed) for tests
+- [x] write tests against `InMemorySecretStore`: set+get round-trip, get missing returns null, delete removes, set overwrites
+- [x] run tests — must pass before task 7
 
 ### Task 7: Core/CredentialStore.cs
 
