@@ -155,13 +155,13 @@
 - Create: `src-tauri/src/core/config_store.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] implement `atomic_write(path, bytes)` (write temp in same dir + rename)
-- [ ] implement `backup(path, backups_dir)`: copy to `backups/<filename>.<timestamp>.bak`, keep newest N (e.g. 10), prune older
-- [ ] implement `ConfigStore::load(dir)` (return default if file missing) and `save(dir, &AppConfig)` (atomic)
-- [ ] resolve app config dir via `dirs` (`%APPDATA%/ccswitcher`, `~/Library/Application Support/ccswitcher`)
-- [ ] write tests for `atomic_write` (content correct, no temp leftovers) and `backup` (timestamped copy created, original intact, retention cap prunes oldest)
-- [ ] write tests for `ConfigStore` load-missing-returns-default and save→load round-trip (using a temp dir)
-- [ ] run tests — must pass before next task
+- [x] implement `atomic_write(path, bytes)` (write temp in same dir + rename)
+- [x] implement `backup(path, backups_dir)`: copy to `backups/<filename>.<timestamp>.bak`, keep newest N (e.g. 10), prune older
+- [x] implement `ConfigStore::load(dir)` (return default if file missing) and `save(dir, &AppConfig)` (atomic)
+- [x] resolve app config dir via `dirs` (`%APPDATA%/ccswitcher`, `~/Library/Application Support/ccswitcher`)
+- [x] write tests for `atomic_write` (content correct, no temp leftovers) and `backup` (timestamped copy created, original intact, retention cap prunes oldest)
+- [x] write tests for `ConfigStore` load-missing-returns-default and save→load round-trip (using a temp dir)
+- [x] run tests — must pass before next task
 
 ### Task 4: Secret store abstraction (keyring) with mock
 

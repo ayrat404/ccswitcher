@@ -16,4 +16,6 @@
 //! Submodules are added by subsequent tasks; `pub mod` declarations are
 //! introduced as each module lands.
 
+pub mod atomic;
+pub mod config_store;
 pub mod model;
