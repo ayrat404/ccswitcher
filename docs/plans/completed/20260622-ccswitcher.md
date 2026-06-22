@@ -363,10 +363,10 @@
 - Retention cap implemented in `prune` function (line 118)
 
 ### Task 16: [Final] Documentation
-- [ ] write `README.md`: what it does, supported platforms, how switching works, build/run instructions
-- [ ] document the managed-keys contract, credential-lifecycle (capture-on-switch-out), and config/secret storage locations
-- [ ] update `CLAUDE.md` (seeded in Task 1) with any conventions discovered during implementation
-- [ ] move this plan to `docs/plans/completed/`
+- [x] write `README.md`: what it does, supported platforms, how switching works, build/run instructions
+- [x] document the managed-keys contract, credential-lifecycle (capture-on-switch-out), and config/secret storage locations
+- [x] update `CLAUDE.md` (seeded in Task 1) with any conventions discovered during implementation
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 *Items requiring manual intervention or external systems — informational only*
