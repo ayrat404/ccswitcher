@@ -175,6 +175,7 @@ pub fn apply_account(
 /// Returns `true` when the active id was cleared. Callers (e.g. after deleting
 /// an account, or on startup) use this to keep `config.active_account_id`
 /// consistent — a dangling id would otherwise mis-drive capture-on-switch-out.
+#[must_use]
 pub fn clear_active_if_missing(config: &mut AppConfig) -> bool {
     if let Some(active_id) = &config.active_account_id {
         let exists = config.accounts.iter().any(|a| &a.id == active_id);

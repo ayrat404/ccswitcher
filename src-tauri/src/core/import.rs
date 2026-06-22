@@ -21,9 +21,9 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::claude_paths::{settings_path, ClaudePathError};
-use super::credential_store::CredentialStore;
+use super::credential_store::{CredentialStore, CredentialStoreError};
 use super::model::{Account, AccountType, AuthKind};
-use super::secret_store::SecretStore;
+use super::secret_store::{SecretStore, SecretStoreError};
 use super::settings_env::{load_settings, SettingsEnvError};
 
 /// Errors raised during import detection or account creation.
@@ -40,10 +40,10 @@ pub enum ImportError {
     NoHomeDir,
     /// Secret store operation failed.
     #[error("secret store error: {0}")]
-    SecretStore(String),
+    SecretStore(#[from] SecretStoreError),
     /// Credential store operation failed.
     #[error("credential store error: {0}")]
-    CredentialStore(String),
+    CredentialStore(#[from] CredentialStoreError),
 }
 
 impl From<ClaudePathError> for ImportError {
@@ -197,7 +197,7 @@ pub fn detect_current(
             }))
         }
         Ok(None) => Ok(None),
-        Err(e) => Err(ImportError::CredentialStore(e.to_string())),
+        Err(e) => Err(ImportError::CredentialStore(e)),
     }
 }
 
@@ -356,7 +356,7 @@ pub fn import(
     // Store the secret in the keyring.
     secret_store
         .set(&id, &secret_value)
-        .map_err(|e| ImportError::SecretStore(e.to_string()))?;
+        .map_err(ImportError::SecretStore)?;
 
     Ok(if let Some(warning) = warning {
         ImportResult::CreatedWithWarning(account, warning)
