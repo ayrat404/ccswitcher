@@ -12,12 +12,14 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Runtime,
 };
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::core::model::{AccountType, AppConfig};
 
 /// Menu item IDs for event handling.
 pub mod menu_ids {
     pub const PROXY_TOGGLE: &str = "proxy_toggle";
+    pub const AUTOSTART: &str = "autostart";
     pub const IMPORT: &str = "import";
     pub const SETTINGS: &str = "settings";
     pub const QUIT: &str = "quit";
@@ -44,6 +46,15 @@ pub fn format_account_label(name: &str, account_type: &AccountType, is_active: b
         AccountType::Token => "(token)",
     };
     format!("{}{} {}", checkmark, name, type_label)
+}
+
+/// Format the launch-at-startup toggle label.
+///
+/// Returns "☑ Launch at startup" / "☐ Launch at startup" depending on whether
+/// the OS autostart entry is currently enabled.
+pub fn format_autostart_label(enabled: bool) -> String {
+    let indicator = if enabled { "☑" } else { "☐" };
+    format!("{} Launch at startup", indicator)
 }
 
 /// Build a tray menu from the current app state.
@@ -119,6 +130,17 @@ pub fn build_tray_menu<R: Runtime>(
     // Add separator before quit
     let sep3 = PredefinedMenuItem::separator(app_handle)?;
     menu_items.push(Box::new(sep3));
+
+    // Launch at startup toggle — reflects the current OS autostart state.
+    let autostart_on = app_handle.autolaunch().is_enabled().unwrap_or(false);
+    let autostart_item = MenuItem::with_id(
+        app_handle,
+        menu_ids::AUTOSTART,
+        format_autostart_label(autostart_on),
+        true,
+        None::<&str>,
+    )?;
+    menu_items.push(Box::new(autostart_item));
 
     // Quit
     let quit_item = MenuItem::with_id(

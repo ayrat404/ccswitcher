@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{Emitter, Listener, Manager};
+use tauri_plugin_autostart::ManagerExt;
 
 use ccswitcher_lib::core::claude_paths::settings_path;
 use ccswitcher_lib::core::config_store::{ConfigStore, ConfigStoreError};
@@ -100,6 +101,11 @@ fn handle_tray_menu_event<R: tauri::Runtime>(
             app.emit("tray_toggle_proxy", ())?;
             Ok(())
         }
+        menu_ids::AUTOSTART => {
+            // Emit an event to toggle launch-at-login
+            app.emit("tray_toggle_autostart", ())?;
+            Ok(())
+        }
         id if id.starts_with(menu_ids::ACCOUNT_PREFIX) => {
             // Extract account ID from the menu item ID
             let account_id = id[menu_ids::ACCOUNT_PREFIX.len()..].to_string();
@@ -122,6 +128,10 @@ fn main() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             ccswitcher_lib::commands::list_accounts,
             ccswitcher_lib::commands::switch_account,
@@ -214,6 +224,28 @@ fn main() {
                     let state = handle.state::<AppState>();
                     let config = state.mutex.lock().await.clone();
                     let _ = ccswitcher_lib::tray::update_tray_icon(&handle, &config);
+                });
+            });
+
+            // Listen for tray_toggle_autostart: flip launch-at-startup and
+            // rebuild the tray menu so the ☑/☐ reflects the new state.
+            let app_handle = app.handle().clone();
+            app.listen("tray_toggle_autostart", move |_event| {
+                let handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let autolaunch = handle.autolaunch();
+                    let result = match autolaunch.is_enabled() {
+                        Ok(true) => autolaunch.disable(),
+                        Ok(false) => autolaunch.enable(),
+                        Err(_) => autolaunch.enable(),
+                    };
+                    if let Err(e) = result {
+                        eprintln!("Failed to toggle autostart: {:?}", e);
+                    } else {
+                        let state = handle.state::<AppState>();
+                        let config = state.mutex.lock().await.clone();
+                        let _ = ccswitcher_lib::tray::update_tray_icon(&handle, &config);
+                    }
                 });
             });
 
