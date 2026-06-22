@@ -6,6 +6,7 @@
 
 pub mod commands;
 pub mod core;
+pub mod tray;
 
 /// Re-export the keyring secret store for use in commands.
 pub use core::secret_store::KeyringSecretStore;

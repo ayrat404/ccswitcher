@@ -277,11 +277,11 @@
 - Create: `src-tauri/src/tray.rs`
 - Modify: `src-tauri/src/main.rs`
 
-- [ ] build tray menu dynamically: account list (✓ on active, type label), proxy toggle item showing address, `Import current login…`, `Settings…`, `Quit`
-- [ ] wire menu events to commands; rebuild menu after state changes (switch / proxy / account edits)
-- [ ] open the settings window on `Settings…`; trigger import flow on `Import current login…`
-- [ ] manual smoke build (`cargo tauri dev`) to confirm tray renders and items fire (note: UI not unit-tested)
-- [ ] run `cargo test` (core unchanged) — must pass before next task
+- [x] build tray menu dynamically: account list (✓ on active, type label), proxy toggle item showing address, `Import current login…`, `Settings…`, `Quit`
+- [x] wire menu events to commands; rebuild menu after state changes (switch / proxy / account edits)
+- [x] open the settings window on `Settings…`; trigger import flow on `Import current login…`
+- [x] manual smoke build (`cargo build`) to confirm tray renders and items fire (note: UI not unit-tested)
+- [x] run `cargo test` (core unchanged) — must pass before next task
 
 ### Task 13: Settings window UI
 

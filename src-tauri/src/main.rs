@@ -3,14 +3,13 @@
 
 //! ccswitcher binary entry point.
 //!
-//! Initializes the application state (paths, stores, config) and registers the
-//! Tauri commands. The runtime shell is minimal — all behaviour lives in the
-//! core library and the command layer.
+//! Initializes the application state (paths, stores, config), creates the
+//! tray menu, and registers the Tauri commands and event handlers.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Listener, Manager};
 
 use ccswitcher_lib::core::claude_paths::settings_path;
 use ccswitcher_lib::core::config_store::{ConfigStore, ConfigStoreError};
@@ -18,6 +17,7 @@ use ccswitcher_lib::core::credential_store::default_credential_store;
 use ccswitcher_lib::core::model::AppConfig;
 use ccswitcher_lib::core::secret_store::KeyringSecretStore;
 use ccswitcher_lib::commands::AppState;
+use ccswitcher_lib::tray::menu_ids;
 
 /// Resolve the ccswitcher config directory.
 ///
@@ -65,11 +65,61 @@ fn init_app_state() -> Result<(AppState, AppConfig), Box<dyn std::error::Error>>
     Ok((app_state, config))
 }
 
+/// Handle a tray menu event.
+///
+/// This function is called when a user clicks an item in the tray menu.
+/// It dispatches the appropriate action based on the menu item ID.
+///
+/// For actions that need to invoke commands, we emit events that will be
+/// handled by listeners that run in the async context.
+fn handle_tray_menu_event<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match id {
+        menu_ids::QUIT => {
+            // Exit the app
+            app.exit(0);
+            Ok(())
+        }
+        menu_ids::SETTINGS => {
+            // Open the settings window
+            if let Some(settings_window) = app.get_webview_window("settings") {
+                settings_window.show()?;
+                settings_window.set_focus()?;
+            }
+            Ok(())
+        }
+        menu_ids::IMPORT => {
+            // Emit an event for the import flow
+            app.emit("tray_import", ())?;
+            Ok(())
+        }
+        menu_ids::PROXY_TOGGLE => {
+            // Emit an event to toggle the proxy
+            app.emit("tray_toggle_proxy", ())?;
+            Ok(())
+        }
+        id if id.starts_with(menu_ids::ACCOUNT_PREFIX) => {
+            // Extract account ID from the menu item ID
+            let account_id = id[menu_ids::ACCOUNT_PREFIX.len()..].to_string();
+
+            // Emit an event to switch accounts
+            app.emit("tray_switch_account", account_id)?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 fn main() {
     // Initialize app state before starting Tauri.
-    let (app_state, _initial_config) = init_app_state().expect("failed to initialize app state");
+    let (app_state, initial_config) =
+        init_app_state().expect("failed to initialize app state");
 
-    // Build and run the Tauri app.
+    // Clone the config for tray creation (we'll need it in the setup closure)
+    let config_for_tray = initial_config.clone();
+
     tauri::Builder::default()
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
@@ -83,13 +133,76 @@ fn main() {
             ccswitcher_lib::commands::import_current,
             ccswitcher_lib::commands::get_state,
         ])
-        .setup(|app| {
-            // TODO: Task 12 will set up the tray menu here.
-            // TODO: Task 14 will set up notification permissions here.
+        .setup(move |app| {
+            // Create the initial tray menu
+            let app_handle = app.handle();
+            if let Err(e) = ccswitcher_lib::tray::create_tray(app_handle, &config_for_tray) {
+                eprintln!("Failed to create tray icon: {}", e);
+                // Don't fail the app startup if tray creation fails
+                // (e.g., in headless environments)
+            }
+
+            // Register a global menu event listener for the tray
+            let app_handle = app.handle().clone();
+            app.on_menu_event(move |_app, event| {
+                if let Err(e) = handle_tray_menu_event(&app_handle, event.id().as_ref()) {
+                    eprintln!("Failed to handle menu event: {}", e);
+                }
+            });
+
+            // Listen for tray_toggle_proxy event and invoke the command
+            let app_handle = app.handle().clone();
+            app.listen("tray_toggle_proxy", move |_event| {
+                let handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+
+                    // Get current proxy state
+                    let config = state.mutex.lock().await;
+                    let new_enabled = !config.proxy.enabled;
+                    drop(config);
+
+                    if let Err(e) =
+                        ccswitcher_lib::commands::set_proxy_enabled(new_enabled, state).await
+                    {
+                        eprintln!("Failed to toggle proxy: {:?}", e);
+                    } else {
+                        // Refresh the tray menu
+                        let config = tauri::async_runtime::block_on(async {
+                            handle.state::<AppState>().mutex.lock().await.clone()
+                        });
+                        let _ = ccswitcher_lib::tray::update_tray_icon(&handle, &config);
+                    }
+                });
+            });
+
+            // Listen for tray_switch_account event and invoke the command
+            let app_handle = app.handle().clone();
+            app.listen("tray_switch_account", move |event| {
+                let account_id = event.payload().to_string();
+                let handle = app_handle.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+
+                    if let Err(e) = ccswitcher_lib::commands::switch_account(account_id, state).await
+                    {
+                        eprintln!("Failed to switch account: {:?}", e);
+                    } else {
+                        // Refresh the tray menu
+                        let config = tauri::async_runtime::block_on(async {
+                            handle.state::<AppState>().mutex.lock().await.clone()
+                        });
+                        let _ = ccswitcher_lib::tray::update_tray_icon(&handle, &config);
+                    }
+                });
+            });
+
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
             }
             Ok(())
         })
