@@ -196,13 +196,13 @@
 - Create: `src-tauri/src/core/credential_store.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] define `CredentialStore` trait (`read() -> Option<String>`, `write(blob)`)
-- [ ] implement `FileCredentialStore` (Windows: read/write `~/.claude/.credentials.json` atomically + timestamped backup)
-- [ ] implement `KeychainCredentialStore` (macOS: read/write Keychain `Claude Code-credentials`)
-- [ ] wire compile-time/runtime platform selection (`#[cfg(target_os)]`) into a `default_credential_store()`
-- [ ] implement `InMemoryCredentialStore` for tests
-- [ ] write tests against `InMemoryCredentialStore` (snapshot then restore yields same blob; read-missing returns None)
-- [ ] run tests — must pass before next task
+- [x] define `CredentialStore` trait (`read() -> Option<String>`, `write(blob)`)
+- [x] implement `FileCredentialStore` (Windows: read/write `~/.claude/.credentials.json` atomically + timestamped backup)
+- [x] implement `KeychainCredentialStore` (macOS: read/write Keychain `Claude Code-credentials`)
+- [x] wire compile-time/runtime platform selection (`#[cfg(target_os)]`) into a `default_credential_store()`
+- [x] implement `InMemoryCredentialStore` for tests
+- [x] write tests against `InMemoryCredentialStore` (snapshot then restore yields same blob; read-missing returns None)
+- [x] run tests — must pass before next task
 
 ### Task 7: Env builder for an account (token vs oauth + proxy + extra_env)
 
