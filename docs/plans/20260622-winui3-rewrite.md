@@ -245,7 +245,7 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/Switcher.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/SwitcherTests.cs`
 
-- [ ] implement `Switcher.ApplyAccount(config, accountId, deps)` with the exact 8-step order from `switcher.rs`:
+- [x] implement `Switcher.ApplyAccount(config, accountId, deps)` with the exact 8-step order from `switcher.rs`:
   1. Validate target exists (throw `UnknownAccountException` if not) — unknown id must not touch any store
   2. Capture-on-switch-out: ONLY if active account is a **different, still-existing OAuth** account — re-snapshot live cred blob into keyring (skip silently if live blob missing); also re-snapshot live `oauthAccount` from `~/.claude.json` via `UserConfig.ReadOauthAccount` + `ISecretStore.Set(OauthAccountKey(activeId), ...)` — these keyring writes are intentional and never rolled back
   3. Load `settings.json` (invalid JSON aborts before any mutation)
@@ -254,9 +254,9 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
   6. Backup + atomic write `settings.json`
   7. Restore OAuth credential snapshot for OAuth target (if stored snapshot exists; no snapshot = switch still succeeds); also restore `oauthAccount` via `UserConfig.MergeOauthAccount` (best-effort, failure must not fail the whole switch)
   8. Persist config (managed_keys + active_account_id)
-- [ ] implement `Switcher.ClearActiveIfMissing(config) → bool`: clear `active_account_id` when it refers to a non-existent account; return true if cleared
-- [ ] define `SwitchDeps` with: `settingsPath`, `configDir`, `userConfigPath?`, `ISecretStore`, `ICredentialStore`
-- [ ] write tests mirroring Rust test suite:
+- [x] implement `Switcher.ClearActiveIfMissing(config) → bool`: clear `active_account_id` when it refers to a non-existent account; return true if cleared
+- [x] define `SwitchDeps` with: `settingsPath`, `configDir`, `userConfigPath?`, `ISecretStore`, `ICredentialStore`
+- [x] write tests mirroring Rust test suite:
   - unknown target returns typed error and touches no store
   - token switch writes env and persists managed_keys
   - oauth restores snapshot and writes no token key
@@ -266,7 +266,7 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
   - cross-store post-abort is idempotent on re-run
   - oauth switch captures+restores oauthAccount section in ~/.claude.json
   - `ClearActiveIfMissing` clears dangling id; keeps existing id; noop when None
-- [ ] run tests — must pass before task 11
+- [x] run tests — must pass before task 11
 
 ### Task 11: Core/Proxy.cs
 

@@ -162,7 +162,7 @@ public sealed class AppConfig
     /// <summary>Currently active account id, or null if no account is active.</summary>
     [JsonPropertyName("active_account_id")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ActiveAccountId { get; init; }
+    public string? ActiveAccountId { get; set; }
 
     /// <summary>Global proxy settings.</summary>
     [JsonPropertyName("proxy")]
@@ -171,7 +171,7 @@ public sealed class AppConfig
     /// <summary>The set of env keys last written by ccswitcher into settings.json's env.
     /// Used to robustly strip prior managed/extra keys on the next switch.</summary>
     [JsonPropertyName("managed_keys")]
-    public List<string> ManagedKeys { get; init; } = new();
+    public List<string> ManagedKeys { get; set; } = new();
 
     /// <summary>All known accounts.</summary>
     [JsonPropertyName("accounts")]
