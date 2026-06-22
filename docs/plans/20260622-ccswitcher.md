@@ -210,15 +210,15 @@
 - Create: `src-tauri/src/core/env_builder.rs`
 - Modify: `src-tauri/src/core/mod.rs`
 
-- [ ] implement `build_env(account, secret, proxy) -> Result<Map<String,String>>`:
+- [x] implement `build_env(account, secret, proxy) -> Result<Map<String,String>>`:
   - token → (`ANTHROPIC_AUTH_TOKEN`|`ANTHROPIC_API_KEY`) from secret + `ANTHROPIC_BASE_URL` if set
   - oauth → no token key; `ANTHROPIC_BASE_URL` only if the account carries one
   - proxy.enabled → `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
   - always merge `extra_env`
-- [ ] token account with missing/empty secret → typed error (never write an empty `ANTHROPIC_AUTH_TOKEN`)
-- [ ] write tests: token env shape (both auth kinds), oauth env shape (no token key; base_url written only when set), proxy on/off with NO_PROXY, extra_env merged
-- [ ] write tests: missing-secret token account returns error
-- [ ] run tests — must pass before next task
+- [x] token account with missing/empty secret → typed error (never write an empty `ANTHROPIC_AUTH_TOKEN`)
+- [x] write tests: token env shape (both auth kinds), oauth env shape (no token key; base_url written only when set), proxy on/off with NO_PROXY, extra_env merged
+- [x] write tests: missing-secret token account returns error
+- [x] run tests — must pass before next task
 
 ### Task 8: Switching engine (apply selected account)
 
