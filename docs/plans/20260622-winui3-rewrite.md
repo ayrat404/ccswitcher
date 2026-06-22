@@ -181,11 +181,11 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/Core/UserConfig.cs`
 - Create: `src-winui/CCSwitcher.Tests/Core/UserConfigTests.cs`
 
-- [ ] define `OauthAccountKey(accountId) → string` returning `"{accountId}#oauthAccount"` — separate keyring key for the oauthAccount snapshot, never collides with the bare credential blob key
-- [ ] implement `UserConfig.ReadOauthAccount(path) → JsonNode?`: read `oauthAccount` field from `~/.claude.json`; return `null` if file missing or key absent; throw `UserConfigException` on invalid JSON
-- [ ] implement `UserConfig.MergeOauthAccount(path, oauth)`: load existing config (or `{}`), replace ONLY the `oauthAccount` key, write atomically with backup; validate `oauth` is a JSON object before writing; create file if absent
-- [ ] write tests: read returns section when present; read returns null when file missing or key absent; read throws on invalid JSON; merge replaces only oauthAccount preserving all other fields (`userID`, `projects`, etc.); merge creates file when absent; merge rejects non-object oauth; merge creates backup
-- [ ] run tests — must pass before task 6
+- [x] define `OauthAccountKey(accountId) → string` returning `"{accountId}#oauthAccount"` — separate keyring key for the oauthAccount snapshot, never collides with the bare credential blob key
+- [x] implement `UserConfig.ReadOauthAccount(path) → JsonNode?`: read `oauthAccount` field from `~/.claude.json`; return `null` if file missing or key absent; throw `UserConfigException` on invalid JSON
+- [x] implement `UserConfig.MergeOauthAccount(path, oauth)`: load existing config (or `{}`), replace ONLY the `oauthAccount` key, write atomically with backup; validate `oauth` is a JSON object before writing; create file if absent
+- [x] write tests: read returns section when present; read returns null when file missing or key absent; read throws on invalid JSON; merge replaces only oauthAccount preserving all other fields (`userID`, `projects`, etc.); merge creates file when absent; merge rejects non-object oauth; merge creates backup
+- [x] run tests — must pass before task 6
 
 ### Task 6: Core/SecretStore.cs
 
