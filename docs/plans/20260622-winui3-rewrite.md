@@ -331,11 +331,11 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/TrayIcon.cs`
 - Modify: `src-winui/CCSwitcher/App.xaml.cs`
 
-- [ ] `TrayIcon.Build(config, callbacks)` — construct `H.NotifyIcon` with context menu: accounts list (checkmark on active), proxy toggle (checked when enabled), separator, "Settings", "Import current login", "Launch at startup" toggle, "Exit"
-- [ ] `TrayIcon.Rebuild(config)` — tear down + recreate menu to reflect updated state
-- [ ] wire `App.xaml.cs`: load config on startup, call `Switcher.ClearActiveIfMissing`, build tray; all mutating callbacks acquire `SemaphoreSlim`, call core function, call `TrayIcon.Rebuild` on success, show sanitized error notification on failure
-- [ ] startup-at-login toggle: read/write `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` via `Microsoft.Win32.Registry`
-- [ ] named-pipe listener in `MainWindow.xaml.cs`: listen for focus signal; on receive show settings window and call `Activate()`
+- [x] `TrayIcon.Build(config, callbacks)` — construct `H.NotifyIcon` with context menu: accounts list (checkmark on active), proxy toggle (checked when enabled), separator, "Settings", "Import current login", "Launch at startup" toggle, "Exit"
+- [x] `TrayIcon.Rebuild(config)` — tear down + recreate menu to reflect updated state
+- [x] wire `App.xaml.cs`: load config on startup, call `Switcher.ClearActiveIfMissing`, build tray; all mutating callbacks acquire `SemaphoreSlim`, call core function, call `TrayIcon.Rebuild` on success, show sanitized error notification on failure
+- [x] startup-at-login toggle: read/write `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` via `Microsoft.Win32.Registry`
+- [x] named-pipe listener in `MainWindow.xaml.cs`: listen for focus signal; on receive show settings window and call `Activate()`
 - [ ] verify tray appears, menu reflects state, clicking account switches correctly, second app launch focuses settings window
 
 ### Task 15: SettingsWindow.xaml

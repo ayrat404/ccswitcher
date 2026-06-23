@@ -1,13 +1,20 @@
 using Microsoft.UI.Xaml;
 using System.IO.Pipes;
 using System.Threading;
+using CCSwitcher.Core;
 
 namespace CCSwitcher;
 
 /// <summary>
 /// Provides application-specific behavior to supplement the default Application class.
-/// Single-instance enforcement: if another instance is already running, signal it via
-/// named pipe to focus its settings window, then exit silently.
+///
+/// Responsibilities:
+/// <list type="bullet">
+///   <item>Single-instance enforcement via a named Mutex + named-pipe IPC.</item>
+///   <item>Config loading and <see cref="Switcher.ClearActiveIfMissing"/> on startup.</item>
+///   <item>Building and maintaining the system tray icon.</item>
+///   <item>Serializing all mutating operations through <see cref="StateMutex"/>.</item>
+/// </list>
 /// </summary>
 public partial class App : Application
 {
@@ -16,11 +23,42 @@ public partial class App : Application
 
     private Mutex? _singleInstanceMutex;
 
+    // -----------------------------------------------------------------------
+    // Shared mutable state — all access must be serialized through StateMutex.
+    // -----------------------------------------------------------------------
+
     /// <summary>
-    /// Serializes all mutating operations (switch, add, update, delete, proxy toggle,
-    /// import) — same role as Arc&lt;Mutex&lt;AppConfig&gt;&gt; in the Tauri version.
+    /// Serializes all mutating operations (switch, add, update, delete, proxy
+    /// toggle, import) — same role as Arc&lt;Mutex&lt;AppConfig&gt;&gt; in the
+    /// Tauri version.
     /// </summary>
     public static readonly SemaphoreSlim StateMutex = new SemaphoreSlim(1, 1);
+
+    private AppConfig _config = AppConfig.Default;
+    private readonly TrayIcon _trayIcon = new();
+    private TrayCallbacks? _callbacks;
+
+    // -----------------------------------------------------------------------
+    // I/O adapters (real implementations; tests inject mocks via the core).
+    // -----------------------------------------------------------------------
+#if WINDOWS10_0_19041_0_OR_GREATER
+    private readonly ISecretStore _secretStore = new PasswordVaultSecretStore();
+#else
+    private readonly ISecretStore _secretStore = new InMemorySecretStore();
+#endif
+    private readonly ICredentialStore _credentialStore =
+        new FileCredentialStore(ClaudePaths.CredentialsPath);
+
+    // -----------------------------------------------------------------------
+    // Settings window (lazily created; null when closed/never opened).
+    // -----------------------------------------------------------------------
+
+    // Placeholder for Task 15. Declared here so the callbacks below compile.
+    private Window? _settingsWindow;
+
+    // -----------------------------------------------------------------------
+    // Application lifecycle
+    // -----------------------------------------------------------------------
 
     public App()
     {
@@ -30,7 +68,10 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         // Attempt to acquire the single-instance mutex.
-        _singleInstanceMutex = new Mutex(initiallyOwned: true, name: MutexName, out bool createdNew);
+        _singleInstanceMutex = new Mutex(
+            initiallyOwned: true,
+            name: MutexName,
+            out bool createdNew);
 
         if (!createdNew)
         {
@@ -41,14 +82,223 @@ public partial class App : Application
             return;
         }
 
-        // We are the first (and only) instance — create the hidden main window.
-        var window = new MainWindow();
+        // We are the first (and only) instance.
+
+        // Load config and heal any dangling active_account_id.
+        InitializeConfig();
+
+        // Build the tray icon with the current config state.
+        _callbacks = BuildCallbacks();
+        _trayIcon.Build(_config, _callbacks);
+
+        // Create the hidden main window (WinUI 3 lifecycle requirement) which
+        // also runs the named-pipe listener for focus signals from second instances.
+        var window = new MainWindow(OnFocusSignalReceived);
         window.Activate();
     }
 
+    // -----------------------------------------------------------------------
+    // Config initialization
+    // -----------------------------------------------------------------------
+
+    private void InitializeConfig()
+    {
+        try
+        {
+            _config = ConfigStore.Load(ClaudePaths.AppConfigDir);
+        }
+        catch (Exception ex)
+        {
+            // Invalid config.json — start fresh so the app is still usable.
+            System.Diagnostics.Debug.WriteLine(
+                $"[CCSwitcher] Failed to load config, using defaults: {ex.Message}");
+            _config = AppConfig.Default;
+        }
+
+        // Clear dangling active_account_id if the account no longer exists.
+        if (Switcher.ClearActiveIfMissing(_config))
+        {
+            try
+            {
+                ConfigStore.Save(ClaudePaths.AppConfigDir, _config);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[CCSwitcher] Failed to save config after clearing dangling id: {ex.Message}");
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Tray callbacks
+    // -----------------------------------------------------------------------
+
+    private TrayCallbacks BuildCallbacks() => new TrayCallbacks
+    {
+        OnSwitchAccount = OnSwitchAccount,
+        OnToggleProxy   = OnToggleProxy,
+        OnOpenSettings  = OnOpenSettings,
+        OnImport        = OnImport,
+        OnToggleStartup = OnToggleStartup,
+        OnExit          = OnExit,
+    };
+
+    private void OnSwitchAccount(string accountId)
+    {
+        _ = Task.Run(async () =>
+        {
+            await StateMutex.WaitAsync();
+            try
+            {
+                var deps = new SwitchDeps
+                {
+                    SettingsPath    = ClaudePaths.SettingsPath,
+                    ConfigDir       = ClaudePaths.AppConfigDir,
+                    UserConfigPath  = ClaudePaths.FindUserConfig(),
+                    SecretStore     = _secretStore,
+                    CredentialStore = _credentialStore,
+                };
+
+                Switcher.ApplyAccount(_config, accountId, deps);
+
+                // Rebuild tray on the UI thread after successful switch.
+                DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+            }
+            catch (Exception ex)
+            {
+                var msg = Secrets.Sanitize(ex.Message);
+                System.Diagnostics.Debug.WriteLine($"[CCSwitcher] Switch failed: {msg}");
+                // TODO (Task 15): show error notification via SettingsWindow.
+            }
+            finally
+            {
+                StateMutex.Release();
+            }
+        });
+    }
+
+    private void OnToggleProxy(bool enabled)
+    {
+        _ = Task.Run(async () =>
+        {
+            await StateMutex.WaitAsync();
+            try
+            {
+                var deps = new ProxyDeps
+                {
+                    SettingsPath = ClaudePaths.SettingsPath,
+                    ConfigDir    = ClaudePaths.AppConfigDir,
+                    SecretStore  = _secretStore,
+                };
+
+                Proxy.SetEnabled(_config, enabled, deps);
+
+                DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+            }
+            catch (Exception ex)
+            {
+                var msg = Secrets.Sanitize(ex.Message);
+                System.Diagnostics.Debug.WriteLine($"[CCSwitcher] Proxy toggle failed: {msg}");
+            }
+            finally
+            {
+                StateMutex.Release();
+            }
+        });
+    }
+
+    private void OnOpenSettings()
+    {
+        DispatchToUI(ShowOrCreateSettingsWindow);
+    }
+
+    private void OnImport()
+    {
+        // Open settings window and trigger the import flow.
+        // The settings window (Task 15) will expose a method to initiate import.
+        DispatchToUI(ShowOrCreateSettingsWindow);
+    }
+
+    private void OnToggleStartup(bool enabled)
+    {
+        StartupManager.SetEnabled(enabled);
+        // Rebuild tray so the toggle item reflects the new state.
+        DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+    }
+
+    private void OnExit()
+    {
+        _trayIcon.Dispose();
+        _singleInstanceMutex?.ReleaseMutex();
+        _singleInstanceMutex?.Dispose();
+        Application.Current.Exit();
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings window management
+    // -----------------------------------------------------------------------
+
+    private void ShowOrCreateSettingsWindow()
+    {
+        // TODO (Task 15): instantiate or re-activate SettingsWindow here.
+        // Example:
+        //   _settingsWindow ??= new SettingsWindow();
+        //   _settingsWindow.Activate();
+        _ = _settingsWindow; // suppress unused-field warning until Task 15
+    }
+
+    // -----------------------------------------------------------------------
+    // Focus signal (from second instance via named pipe)
+    // -----------------------------------------------------------------------
+
     /// <summary>
-    /// Connect to the named pipe server running in the existing instance and send
-    /// the "focus" command so that instance brings its settings window to the front.
+    /// Called on the UI thread when a second instance sends the "focus" signal.
+    /// </summary>
+    internal void OnFocusSignalReceived()
+    {
+        ShowOrCreateSettingsWindow();
+    }
+
+    // -----------------------------------------------------------------------
+    // UI thread dispatch helper
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Run <paramref name="action"/> on the UI thread.
+    /// Safe to call from any thread.
+    /// </summary>
+    private static void DispatchToUI(Action action)
+    {
+        if (Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread() != null)
+        {
+            // Already on a UI thread.
+            action();
+        }
+        else
+        {
+            // Post to the main window's dispatcher (created before any callbacks fire).
+            var queue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            if (queue != null)
+            {
+                queue.TryEnqueue(() => action());
+            }
+            else
+            {
+                // Fallback: use the WinRT dispatcher if available.
+                action();
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Single-instance signalling
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Connect to the named pipe server running in the existing instance and
+    /// send the "focus" command so that instance brings its settings window to
+    /// the front.
     /// </summary>
     private static void SignalExistingInstance()
     {
@@ -59,7 +309,7 @@ public partial class App : Application
                 pipeName: PipeName,
                 direction: PipeDirection.Out);
 
-            // Use a short timeout — if the server isn't ready, we just exit.
+            // Short timeout — if the server isn't ready, we just exit.
             pipe.Connect(timeout: 2000);
 
             using var writer = new StreamWriter(pipe) { AutoFlush = true };

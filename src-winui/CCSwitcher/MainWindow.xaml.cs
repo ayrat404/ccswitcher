@@ -9,19 +9,28 @@ namespace CCSwitcher;
 /// Invisible lifecycle host window required by WinUI 3. Hides itself immediately
 /// on first activation so it never appears in the taskbar or on-screen.
 ///
-/// Also runs a background named-pipe listener: when the App singleton receives a
-/// "focus" signal from a second instance launch, it calls ShowSettingsWindow() to
-/// bring the settings window to the front.
+/// Also runs a background named-pipe listener: when a second instance launches,
+/// it sends a "focus" signal which triggers <see cref="_onFocusSignal"/> — wired
+/// by <see cref="App"/> to show and focus the settings window.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
     private const string PipeName = "CCSwitcher_Focus";
 
+    private readonly Action _onFocusSignal;
     private CancellationTokenSource? _pipeListenerCts;
     private bool _initialized;
 
-    public MainWindow()
+    /// <summary>
+    /// Construct the host window.
+    /// </summary>
+    /// <param name="onFocusSignal">
+    /// Callback invoked on the UI thread when a "focus" pipe message arrives.
+    /// Typically <c>app.OnFocusSignalReceived</c>.
+    /// </param>
+    public MainWindow(Action onFocusSignal)
     {
+        _onFocusSignal = onFocusSignal;
         this.InitializeComponent();
         // WinUI 3 Window does not inherit FrameworkElement; use Activated for
         // the first-activation hook instead of Loaded.
@@ -89,7 +98,7 @@ public sealed partial class MainWindow : Window
 
                 if (message?.Trim().Equals("focus", StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    this.DispatcherQueue.TryEnqueue(ShowSettingsWindow);
+                    this.DispatcherQueue.TryEnqueue(() => _onFocusSignal());
                 }
             }
             catch (OperationCanceledException)
@@ -102,18 +111,6 @@ public sealed partial class MainWindow : Window
                 await Task.Delay(500, ct).ConfigureAwait(false);
             }
         }
-    }
-
-    /// <summary>
-    /// Called on the UI thread when a second-instance focus signal is received.
-    /// TODO (Task 14): replace placeholder with real SettingsWindow show/activate call.
-    /// </summary>
-    private void ShowSettingsWindow()
-    {
-        // TODO (Task 14): instantiate or re-activate SettingsWindow here.
-        // Example:
-        //   _settingsWindow ??= new SettingsWindow();
-        //   _settingsWindow.Activate();
     }
 }
 
