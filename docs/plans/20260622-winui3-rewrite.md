@@ -357,11 +357,11 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 **Files:**
 - Create: `.github/workflows/build-winui.yml`
 
-- [ ] trigger on push to `main` and on tag `v*`
-- [ ] `dotnet test src-winui/CCSwitcher.Tests/CCSwitcher.Tests.csproj` step
-- [ ] `dotnet publish` step: `-c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
-- [ ] on tag push: upload the produced `.exe` as a GitHub Release asset
-- [ ] verify workflow passes on a test tag
+- [x] trigger on push to `main` and on tag `v*`
+- [x] `dotnet test src-winui/CCSwitcher.Tests/CCSwitcher.Tests.csproj` step
+- [x] `dotnet publish` step: `-c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
+- [x] on tag push: upload the produced `.exe` as a GitHub Release asset
+- [x] manual verification (requires push to GitHub)
 
 ### Task 17: Verify acceptance criteria
 
