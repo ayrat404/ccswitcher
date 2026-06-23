@@ -344,13 +344,13 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 - Create: `src-winui/CCSwitcher/SettingsWindow.xaml`
 - Create: `src-winui/CCSwitcher/SettingsWindow.xaml.cs`
 
-- [ ] account list: name + type badge (OAuth / Token); active account highlighted; Edit + Delete buttons per row
-- [ ] "Add Token Account" button → dialog: Name, Base URL (optional), Auth Kind (AuthToken / ApiKey), Token field
-- [ ] "Import current login" button → calls `Importer.Detect`; if detected shows name prompt pre-filled with `Importer.DefaultName`; on confirm calls `Importer.Import`; shows warning if `CreatedWithWarning`
-- [ ] proxy section: enabled toggle, URL field, No-Proxy field; Save calls `Proxy.SetEnabled` + save
-- [ ] "Launch at startup" toggle reads/writes registry key
-- [ ] all mutating operations go through `App.StateMutex` (SemaphoreSlim), apply `Secrets.Sanitize` to any displayed error, call `TrayIcon.Rebuild` on success
-- [ ] manually verify: add, edit, delete, import, proxy toggle, startup toggle, duplicate warning UX
+- [x] account list: name + type badge (OAuth / Token); active account highlighted; Edit + Delete buttons per row
+- [x] "Add Token Account" button → dialog: Name, Base URL (optional), Auth Kind (AuthToken / ApiKey), Token field
+- [x] "Import current login" button → calls `Importer.Detect`; if detected shows name prompt pre-filled with `Importer.DefaultName`; on confirm calls `Importer.Import`; shows warning if `CreatedWithWarning`
+- [x] proxy section: enabled toggle, URL field, No-Proxy field; Save calls `Proxy.SetEnabled` + save
+- [x] "Launch at startup" toggle reads/writes registry key
+- [x] all mutating operations go through `App.StateMutex` (SemaphoreSlim), apply `Secrets.Sanitize` to any displayed error, call `TrayIcon.Rebuild` on success
+- [x] manually verify: add, edit, delete, import, proxy toggle, startup toggle, duplicate warning UX (manually verified)
 
 ### Task 16: GitHub Actions build workflow
 

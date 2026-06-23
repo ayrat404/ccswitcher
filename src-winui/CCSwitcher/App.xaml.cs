@@ -53,8 +53,7 @@ public partial class App : Application
     // Settings window (lazily created; null when closed/never opened).
     // -----------------------------------------------------------------------
 
-    // Placeholder for Task 15. Declared here so the callbacks below compile.
-    private Window? _settingsWindow;
+    private SettingsWindow? _settingsWindow;
 
     // -----------------------------------------------------------------------
     // Application lifecycle
@@ -210,14 +209,17 @@ public partial class App : Application
 
     private void OnOpenSettings()
     {
-        DispatchToUI(ShowOrCreateSettingsWindow);
+        DispatchToUI(() => GetOrCreateSettingsWindow().Activate());
     }
 
     private void OnImport()
     {
         // Open settings window and trigger the import flow.
-        // The settings window (Task 15) will expose a method to initiate import.
-        DispatchToUI(ShowOrCreateSettingsWindow);
+        DispatchToUI(() =>
+        {
+            var win = GetOrCreateSettingsWindow();
+            win.TriggerImport();
+        });
     }
 
     private void OnToggleStartup(bool enabled)
@@ -241,11 +243,51 @@ public partial class App : Application
 
     private void ShowOrCreateSettingsWindow()
     {
-        // TODO (Task 15): instantiate or re-activate SettingsWindow here.
-        // Example:
-        //   _settingsWindow ??= new SettingsWindow();
-        //   _settingsWindow.Activate();
-        _ = _settingsWindow; // suppress unused-field warning until Task 15
+        GetOrCreateSettingsWindow().Activate();
+    }
+
+    private SettingsWindow GetOrCreateSettingsWindow()
+    {
+        if (_settingsWindow == null)
+        {
+            _settingsWindow = new SettingsWindow(this);
+        }
+        _settingsWindow.Activate();
+        return _settingsWindow;
+    }
+
+    /// <summary>
+    /// Called by <see cref="SettingsWindow"/> when it is closed so we can
+    /// null-out the reference and create a fresh window next time.
+    /// </summary>
+    public void OnSettingsWindowClosed()
+    {
+        _settingsWindow = null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Public accessors for SettingsWindow
+    // -----------------------------------------------------------------------
+
+    /// <summary>Returns the current app config (read-only snapshot for the UI).</summary>
+    public AppConfig GetConfig() => _config;
+
+    /// <summary>Returns the secret store used by the core.</summary>
+    public ISecretStore GetSecretStore() => _secretStore;
+
+    /// <summary>Returns the credential store used by the core.</summary>
+    public ICredentialStore GetCredentialStore() => _credentialStore;
+
+    /// <summary>
+    /// Rebuild the tray menu to reflect the latest config state.
+    /// Must be called on the UI thread (or will dispatch to it).
+    /// </summary>
+    public void RebuildTray()
+    {
+        if (Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread() != null)
+            _trayIcon.Rebuild(_config, _callbacks!);
+        else
+            DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
     }
 
     // -----------------------------------------------------------------------
