@@ -105,25 +105,26 @@ public sealed class TrayIcon : IDisposable
             ContextFlyout = BuildMenu(config, callbacks),
         };
 
-        // Try to load the app icon from the application package or resources.
-        // Fall back gracefully if the icon file is not found — the tray will
-        // show a default icon rather than crashing.
+        // Load the app icon from the file copied next to the executable.
+        // Fall back gracefully if it is missing — the tray still registers
+        // (a blank icon) rather than crashing.
         try
         {
-            // LoadIconFromFile requires the icon to be embedded in the package or
-            // accessible as a file. In the self-contained unpackaged scenario, we
-            // look for a file next to the executable.
-            var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? ".";
-            var iconPath = Path.Combine(exeDir, "Assets", "appicon.ico");
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "appicon.ico");
             if (File.Exists(iconPath))
-            {
                 icon.Icon = new System.Drawing.Icon(iconPath);
-            }
         }
         catch
         {
             // Best-effort: icon is cosmetic; failure must not crash startup.
         }
+
+        // CRITICAL: a programmatically-created TaskbarIcon does not register
+        // with the shell until ForceCreate() is called. (In XAML this happens
+        // automatically on Loaded.) Without this the icon never appears in the
+        // tray. enablesEfficiencyMode:false keeps the app responsive to clicks
+        // instead of letting the OS throttle this background process.
+        icon.ForceCreate(enablesEfficiencyMode: false);
 
         return icon;
     }

@@ -21,4 +21,10 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250402001" />
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.3" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Tray icon, copied next to the exe so TrayIcon can load it at runtime. -->
+    <Content Include="Assets\appicon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>
