@@ -38,6 +38,15 @@ public partial class App : Application
     private readonly TrayIcon _trayIcon = new();
     private TrayCallbacks? _callbacks;
 
+    /// <summary>
+    /// The UI thread's dispatcher, captured in <see cref="OnLaunched"/> (which
+    /// runs on the UI thread). Used to marshal tray/window updates back to the
+    /// UI thread from background tasks — <c>DispatcherQueue.GetForCurrentThread()</c>
+    /// returns <see langword="null"/> on a background thread, so it cannot be
+    /// queried lazily from there.
+    /// </summary>
+    private Microsoft.UI.Dispatching.DispatcherQueue? _uiDispatcher;
+
     // -----------------------------------------------------------------------
     // I/O adapters (real implementations; tests inject mocks via the core).
     // -----------------------------------------------------------------------
@@ -82,6 +91,10 @@ public partial class App : Application
         }
 
         // We are the first (and only) instance.
+
+        // Capture the UI thread's dispatcher now (OnLaunched runs on the UI
+        // thread). Background callbacks marshal tray/window updates through it.
+        _uiDispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         // Load config and heal any dangling active_account_id.
         InitializeConfig();
@@ -284,10 +297,7 @@ public partial class App : Application
     /// </summary>
     public void RebuildTray()
     {
-        if (Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread() != null)
-            _trayIcon.Rebuild(_config, _callbacks!);
-        else
-            DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+        DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
     }
 
     // -----------------------------------------------------------------------
@@ -310,27 +320,22 @@ public partial class App : Application
     /// Run <paramref name="action"/> on the UI thread.
     /// Safe to call from any thread.
     /// </summary>
-    private static void DispatchToUI(Action action)
+    private void DispatchToUI(Action action)
     {
+        // Already on the UI thread → run inline.
         if (Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread() != null)
         {
-            // Already on a UI thread.
             action();
+            return;
         }
+
+        // On a background thread → marshal through the dispatcher captured at
+        // launch. GetForCurrentThread() returns null here, so we must use the
+        // stored UI dispatcher rather than re-querying it.
+        if (_uiDispatcher != null)
+            _uiDispatcher.TryEnqueue(() => action());
         else
-        {
-            // Post to the main window's dispatcher (created before any callbacks fire).
-            var queue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-            if (queue != null)
-            {
-                queue.TryEnqueue(() => action());
-            }
-            else
-            {
-                // Fallback: use the WinRT dispatcher if available.
-                action();
-            }
-        }
+            action(); // Pre-launch fallback (should not happen in practice).
     }
 
     // -----------------------------------------------------------------------
