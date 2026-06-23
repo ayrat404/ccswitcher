@@ -92,6 +92,33 @@ cargo tauri build
 The Rust core (`src-tauri/src/core`) is platform-agnostic and fully unit-tested
 with in-memory mocks, so `cargo test` does not require a real OS keychain.
 
+## WinUI 3 (Windows)
+
+The `src-winui/` directory contains a native WinUI 3 implementation for Windows,
+distributed as a self-contained single `.exe` with no runtime dependency on the
+target machine.
+
+### Build
+
+```
+cd src-winui
+dotnet build CCSwitcher.sln
+```
+
+### Run tests
+
+```
+cd src-winui
+dotnet test CCSwitcher.Tests/CCSwitcher.Tests.csproj
+```
+
+### Publish (single self-contained .exe)
+
+```
+cd src-winui
+dotnet publish CCSwitcher/CCSwitcher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish/
+```
+
 ## Installation / Distribution
 
 Currently ccswitcher must be built from source. Pre-built binaries for Windows

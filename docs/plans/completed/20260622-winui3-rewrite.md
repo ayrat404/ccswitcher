@@ -379,9 +379,9 @@ mutating operations (same role as the Tauri `Arc<Mutex<AppConfig>>`).
 
 ### Task 18: [Final] Documentation
 
-- [ ] update `README.md` to document the WinUI 3 build (`cd src-winui && dotnet build`)
-- [ ] update `CLAUDE.md` if new patterns discovered during C# implementation
-- [ ] move this plan to `docs/plans/completed/`
+- [x] update `README.md` to document the WinUI 3 build (`cd src-winui && dotnet build`)
+- [x] update `CLAUDE.md` if new patterns discovered during C# implementation
+- [x] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
 

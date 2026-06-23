@@ -23,6 +23,13 @@ unaware of it.
 - **`src-tauri/src/` (bin/lib)** — Tauri runtime: commands, tray menu, settings
   window. Thin shell over the core. The library crate (`ccswitcher_lib`) holds
   the core so `cargo test` runs without a webview.
+- **`src-winui/`** — native WinUI 3 C# rewrite for Windows. Mirrors the Rust
+  core's module structure in `Core/` and ships as a single self-contained `.exe`.
+  Key classes: `Models`, `AtomicFile`, `ClaudePaths`, `ConfigStore`,
+  `PasswordVaultSecretStore`, `CredentialStore`, `SettingsEnv`, `EnvBuilder`,
+  `Switcher`, `Proxy`, `Importer`, `AccountManager`. UI layer uses
+  `H.NotifyIcon.WinUI` for the system tray and WinUI 3 `Window` for the
+  settings page.
 
 ## Two invariants (do not violate)
 
@@ -206,3 +213,40 @@ user clicks proxy toggle
   -> update_tray_icon() acquires mutex, clones config
   -> build_tray_menu() renders menu with updated proxy state
 ```
+
+### WinUI 3 (src-winui/) conventions
+
+Patterns discovered during the C# rewrite that are non-obvious:
+
+- **`EnableMsixTooling=true` required for WindowsAppSDK 1.6.x with
+  `PublishSingleFile`.** Without this MSBuild property the publish fails at
+  link time with packaging-related errors. Set it in the `.csproj` even though
+  you are not producing an MSIX package.
+
+- **WinUI 3 `Window` has no `Loaded` event.** Use the `Activated` event
+  (fires once the HWND is live) for any initialization that requires the window
+  handle. Guard with a `_initialized` flag so the body runs only once.
+
+- **`PasswordVaultSecretStore` wrapped in `#if WINDOWS10_0_19041_0_OR_GREATER`.**
+  The `Windows.Security.Credentials.PasswordVault` WinRT API is only available
+  on the Windows 10 19041+ TFM. The test project targets a portable TFM that
+  doesn't satisfy this condition, so the real implementation must be inside the
+  conditional-compilation guard. Tests inject `InMemorySecretStore` instead.
+
+- **`H.NotifyIcon.WinUI` tray integration.** Declare the `TaskbarIcon` in
+  `App.xaml` as an application-level resource; access it from anywhere via
+  `Application.Current.Resources`. The icon's context menu is a `MenuFlyout`
+  defined in the same XAML resource; rebuild it by replacing menu items rather
+  than recreating the whole `TaskbarIcon`.
+
+- **Single-instance enforcement.** Use a named `Mutex` (acquired in
+  `App.OnLaunched`). If acquisition fails, send a named-pipe message to the
+  existing instance to bring its window to the foreground, then exit. The
+  existing instance listens on the pipe in a background thread.
+
+- **`dotnet publish` for self-contained single `.exe`:**
+  ```
+  dotnet publish CCSwitcher/CCSwitcher.csproj -c Release -r win-x64 \
+      --self-contained true -p:PublishSingleFile=true -o publish/
+  ```
+  The output `publish/CCSwitcher.exe` has no external runtime dependency.
