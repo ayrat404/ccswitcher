@@ -60,50 +60,13 @@ public sealed class TrayIcon : IDisposable
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Create the tray icon and populate its context menu from
-    /// <paramref name="config"/>.
+    /// Attach to the XAML-declared <paramref name="icon"/> hosted by the hidden
+    /// MainWindow: load its image, populate its context menu, and make sure it
+    /// is registered with the shell.
     /// </summary>
-    public void Build(AppConfig config, TrayCallbacks callbacks)
+    public void Attach(TaskbarIcon icon, AppConfig config, TrayCallbacks callbacks)
     {
-        _icon?.Dispose();
-        _icon = CreateIcon(config, callbacks);
-    }
-
-    /// <summary>
-    /// Tear down the current context menu and rebuild it to reflect the
-    /// updated <paramref name="config"/>.
-    /// </summary>
-    public void Rebuild(AppConfig config, TrayCallbacks callbacks)
-    {
-        if (_icon == null)
-        {
-            Build(config, callbacks);
-            return;
-        }
-
-        // Replace only the context menu; keep the same icon instance so the
-        // tray icon itself does not flicker.
-        _icon.ContextFlyout = BuildMenu(config, callbacks);
-    }
-
-    /// <inheritdoc/>
-    public void Dispose()
-    {
-        _icon?.Dispose();
-        _icon = null;
-    }
-
-    // -----------------------------------------------------------------------
-    // Private helpers
-    // -----------------------------------------------------------------------
-
-    private static TaskbarIcon CreateIcon(AppConfig config, TrayCallbacks callbacks)
-    {
-        var icon = new TaskbarIcon
-        {
-            ToolTipText = "CCSwitcher",
-            ContextFlyout = BuildMenu(config, callbacks),
-        };
+        _icon = icon;
 
         // Load the app icon from the file copied next to the executable.
         // Fall back gracefully if it is missing — the tray still registers
@@ -119,16 +82,48 @@ public sealed class TrayIcon : IDisposable
             // Best-effort: icon is cosmetic; failure must not crash startup.
         }
 
-        // CRITICAL: a programmatically-created TaskbarIcon does not register
-        // with the shell until ForceCreate() is called. (In XAML this happens
-        // automatically on Loaded.) Without this the icon never appears in the
-        // tray. enablesEfficiencyMode:false keeps the app responsive to clicks
-        // instead of letting the OS throttle this background process.
-        icon.ForceCreate(enablesEfficiencyMode: false);
+        icon.ContextFlyout = BuildMenu(config, callbacks);
 
-        return icon;
+        // Native-looking tray menu: PopupMenu emulates the menu with a native
+        // Win32 popup (matches the OS look) and routes selections to each item's
+        // Command. Our menu items wire Command (not Click) precisely for this
+        // mode. It also works without a visible host window.
+        icon.ContextMenuMode = ContextMenuMode.PopupMenu;
+
+        // The XAML TaskbarIcon normally self-registers on Loaded, but the host
+        // window is hidden right after activation; force creation here so the
+        // icon is guaranteed to appear. enablesEfficiencyMode:false keeps the
+        // background process responsive to tray clicks.
+        if (!icon.IsCreated)
+            icon.ForceCreate(enablesEfficiencyMode: false);
     }
 
+    /// <summary>
+    /// Rebuild the context menu to reflect the updated <paramref name="config"/>.
+    /// Keeps the same icon instance so the tray icon does not flicker.
+    /// </summary>
+    public void Rebuild(AppConfig config, TrayCallbacks callbacks)
+    {
+        if (_icon == null)
+            return;
+
+        _icon.ContextFlyout = BuildMenu(config, callbacks);
+    }
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        _icon?.Dispose();
+        _icon = null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Private helpers
+    // -----------------------------------------------------------------------
+
+    // NOTE: items use Command, not Click. In PopupMenu mode (native Win32 menu)
+    // H.NotifyIcon routes a selection to the item's Command — the Click event
+    // never fires. Wiring Command keeps the menu working in the native mode.
     private static MenuFlyout BuildMenu(AppConfig config, TrayCallbacks callbacks)
     {
         var flyout = new MenuFlyout();
@@ -140,54 +135,78 @@ public sealed class TrayIcon : IDisposable
             var displayName = isActive ? $"✓ {account.Name}" : account.Name;
 
             var accountId = account.Id; // capture for closure
-            var item = new MenuFlyoutItem { Text = displayName };
-            item.Click += (_, _) => callbacks.OnSwitchAccount?.Invoke(accountId);
-            flyout.Items.Add(item);
+            flyout.Items.Add(new MenuFlyoutItem
+            {
+                Text = displayName,
+                Command = new DelegateCommand(() => callbacks.OnSwitchAccount?.Invoke(accountId)),
+            });
         }
 
         if (config.Accounts.Count > 0)
             flyout.Items.Add(new MenuFlyoutSeparator());
 
         // --- Proxy toggle ---------------------------------------------------
-        var proxyItem = new ToggleMenuFlyoutItem
+        flyout.Items.Add(new ToggleMenuFlyoutItem
         {
             Text = "Proxy",
             IsChecked = config.Proxy.Enabled,
-        };
-        proxyItem.Click += (_, _) =>
-            callbacks.OnToggleProxy?.Invoke(!config.Proxy.Enabled);
-        flyout.Items.Add(proxyItem);
+            Command = new DelegateCommand(() => callbacks.OnToggleProxy?.Invoke(!config.Proxy.Enabled)),
+        });
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
         // --- Settings -------------------------------------------------------
-        var settingsItem = new MenuFlyoutItem { Text = "Settings…" };
-        settingsItem.Click += (_, _) => callbacks.OnOpenSettings?.Invoke();
-        flyout.Items.Add(settingsItem);
+        flyout.Items.Add(new MenuFlyoutItem
+        {
+            Text = "Settings…",
+            Command = new DelegateCommand(() => callbacks.OnOpenSettings?.Invoke()),
+        });
 
         // --- Import ---------------------------------------------------------
-        var importItem = new MenuFlyoutItem { Text = "Import current login" };
-        importItem.Click += (_, _) => callbacks.OnImport?.Invoke();
-        flyout.Items.Add(importItem);
+        flyout.Items.Add(new MenuFlyoutItem
+        {
+            Text = "Import current login",
+            Command = new DelegateCommand(() => callbacks.OnImport?.Invoke()),
+        });
 
         // --- Launch at startup ----------------------------------------------
         var startupEnabled = StartupManager.IsEnabled();
-        var startupItem = new ToggleMenuFlyoutItem
+        flyout.Items.Add(new ToggleMenuFlyoutItem
         {
             Text = "Launch at startup",
             IsChecked = startupEnabled,
-        };
-        startupItem.Click += (_, _) =>
-            callbacks.OnToggleStartup?.Invoke(!startupEnabled);
-        flyout.Items.Add(startupItem);
+            Command = new DelegateCommand(() => callbacks.OnToggleStartup?.Invoke(!startupEnabled)),
+        });
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
         // --- Exit -----------------------------------------------------------
-        var exitItem = new MenuFlyoutItem { Text = "Exit" };
-        exitItem.Click += (_, _) => callbacks.OnExit?.Invoke();
-        flyout.Items.Add(exitItem);
+        flyout.Items.Add(new MenuFlyoutItem
+        {
+            Text = "Exit",
+            Command = new DelegateCommand(() => callbacks.OnExit?.Invoke()),
+        });
 
         return flyout;
     }
+}
+
+/// <summary>
+/// Minimal <see cref="System.Windows.Input.ICommand"/> that always executes a
+/// fixed action — used to wire tray menu items so they work in the native
+/// PopupMenu context-menu mode (which invokes Command, not Click).
+/// </summary>
+internal sealed class DelegateCommand : System.Windows.Input.ICommand
+{
+    private readonly Action _execute;
+
+    public DelegateCommand(Action execute) => _execute = execute;
+
+    // CanExecute is always true; the event is required by ICommand but never
+    // raised (empty accessors avoid an unused-field warning).
+    public event EventHandler? CanExecuteChanged { add { } remove { } }
+
+    public bool CanExecute(object? parameter) => true;
+
+    public void Execute(object? parameter) => _execute();
 }

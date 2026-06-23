@@ -47,8 +47,55 @@ public sealed partial class SettingsWindow : Window
         _app = app;
         this.InitializeComponent();
 
+        // Title-bar icon.
+        var appWindow = this.AppWindow;
+        try
+        {
+            var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "appicon.ico");
+            if (System.IO.File.Exists(iconPath))
+                appWindow.SetIcon(iconPath);
+        }
+        catch
+        {
+            // Icon is cosmetic; ignore failures.
+        }
+
+        SizeWindow(widthDip: 560, heightDip: 880);
+
         this.Activated += OnFirstActivated;
         this.Closed += OnClosed;
+    }
+
+    /// <summary>
+    /// Resize the window to a DPI-aware size. <see cref="Microsoft.UI.Windowing.AppWindow.Resize"/>
+    /// takes physical pixels, so the requested device-independent size is scaled
+    /// by the monitor's DPI (e.g. ×1.5 at 150% scaling) and then clamped to the
+    /// monitor's work area so it never exceeds the visible screen.
+    /// </summary>
+    private void SizeWindow(int widthDip, int heightDip)
+    {
+        var appWindow = this.AppWindow;
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        uint dpi = NativeMethods.GetDpiForWindow(hwnd);
+        double scale = dpi == 0 ? 1.0 : dpi / 96.0;
+
+        int width = (int)(widthDip * scale);
+        int height = (int)(heightDip * scale);
+
+        // Clamp to the monitor's work area (also physical pixels) with a margin.
+        var work = Microsoft.UI.Windowing.DisplayArea
+            .GetFromWindowId(appWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest)
+            .WorkArea;
+        width = Math.Min(width, work.Width - (int)(40 * scale));
+        height = Math.Min(height, work.Height - (int)(40 * scale));
+
+        appWindow.Resize(new Windows.Graphics.SizeInt32(width, height));
+
+        // Center within the monitor's work area.
+        int x = work.X + (work.Width - width) / 2;
+        int y = work.Y + (work.Height - height) / 2;
+        appWindow.Move(new Windows.Graphics.PointInt32(x, y));
     }
 
     private bool _initialized;

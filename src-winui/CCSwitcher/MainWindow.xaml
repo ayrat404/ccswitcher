@@ -2,8 +2,13 @@
     x:Class="CCSwitcher.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:tb="using:H.NotifyIcon"
     Title="CCSwitcher">
-    <!-- Empty content: this window is hidden immediately on Loaded and serves only
-         as the WinUI 3 lifecycle host. The settings window is a separate Window. -->
-    <Grid/>
+    <!-- This window is the hidden lifecycle host. It is never shown on-screen,
+         but its content must load so the TaskbarIcon below registers itself with
+         the shell (H.NotifyIcon creates the tray icon on Loaded) and gets a
+         XamlRoot for its context menu. The settings window is a separate Window. -->
+    <Grid>
+        <tb:TaskbarIcon x:Name="TrayControl" ToolTipText="CCSwitcher" />
+    </Grid>
 </Window>

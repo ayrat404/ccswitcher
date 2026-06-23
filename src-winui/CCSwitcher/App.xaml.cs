@@ -64,6 +64,9 @@ public partial class App : Application
 
     private SettingsWindow? _settingsWindow;
 
+    /// <summary>The hidden lifecycle host window that owns the tray icon.</summary>
+    private MainWindow? _mainWindow;
+
     // -----------------------------------------------------------------------
     // Application lifecycle
     // -----------------------------------------------------------------------
@@ -99,14 +102,26 @@ public partial class App : Application
         // Load config and heal any dangling active_account_id.
         InitializeConfig();
 
-        // Build the tray icon with the current config state.
         _callbacks = BuildCallbacks();
-        _trayIcon.Build(_config, _callbacks);
 
-        // Create the hidden main window (WinUI 3 lifecycle requirement) which
-        // also runs the named-pipe listener for focus signals from second instances.
-        var window = new MainWindow(OnFocusSignalReceived);
-        window.Activate();
+        // Create the host window (WinUI 3 lifecycle requirement). It hosts the
+        // tray icon and runs the named-pipe listener for focus signals from
+        // second instances.
+        _mainWindow = new MainWindow(OnFocusSignalReceived);
+
+        // Activate so the window's content loads (which registers the XAML
+        // TaskbarIcon), then immediately hide it: it must never appear on-screen
+        // or in the taskbar, but stays "open" so the process keeps running.
+        _mainWindow.Activate();
+
+        // Wire the tray menu/icon onto the now-loaded TaskbarIcon.
+        _trayIcon.Attach(_mainWindow.TrayIcon, _config, _callbacks);
+
+        // Hide the host window via the WinUI-native AppWindow API (reliable,
+        // unlike Win32 SW_HIDE races) and remove it from Alt-Tab / taskbar.
+        var appWindow = _mainWindow.AppWindow;
+        appWindow.IsShownInSwitchers = false;
+        appWindow.Hide();
     }
 
     // -----------------------------------------------------------------------
@@ -222,7 +237,14 @@ public partial class App : Application
 
     private void OnOpenSettings()
     {
-        DispatchToUI(() => GetOrCreateSettingsWindow().Activate());
+        DispatchToUI(() =>
+        {
+            try { GetOrCreateSettingsWindow(); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CCSwitcher] Open settings failed: {ex}");
+            }
+        });
     }
 
     private void OnImport()
@@ -230,8 +252,15 @@ public partial class App : Application
         // Open settings window and trigger the import flow.
         DispatchToUI(() =>
         {
-            var win = GetOrCreateSettingsWindow();
-            win.TriggerImport();
+            try
+            {
+                var win = GetOrCreateSettingsWindow();
+                win.TriggerImport();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CCSwitcher] Import failed: {ex}");
+            }
         });
     }
 
@@ -266,7 +295,30 @@ public partial class App : Application
             _settingsWindow = new SettingsWindow(this);
         }
         _settingsWindow.Activate();
+        BringToFront(_settingsWindow);
         return _settingsWindow;
+    }
+
+    /// <summary>
+    /// Reliably bring <paramref name="window"/> to the foreground. A WinUI app
+    /// whose host window is hidden runs as a background process, so a plain
+    /// <c>Activate()</c> often leaves the new window behind other windows or
+    /// without focus. Show its AppWindow and force it foreground via Win32.
+    /// </summary>
+    private static void BringToFront(Window window)
+    {
+        try
+        {
+            window.AppWindow.Show();
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+            NativeMethods.SetForegroundWindow(hwnd);
+        }
+        catch
+        {
+            // Best-effort: focus is cosmetic; failure must not crash.
+        }
     }
 
     /// <summary>
@@ -367,4 +419,24 @@ public partial class App : Application
             // Best-effort: if the signal fails, the second instance still exits.
         }
     }
+}
+
+/// <summary>
+/// Minimal Win32 P/Invoke surface for bringing a window to the foreground.
+/// </summary>
+internal static class NativeMethods
+{
+    internal const int SW_RESTORE = 9;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    internal static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    /// <summary>DPI of the monitor the window is on (96 = 100% scaling).</summary>
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    internal static extern uint GetDpiForWindow(IntPtr hWnd);
 }

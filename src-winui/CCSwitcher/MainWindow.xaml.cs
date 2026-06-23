@@ -1,13 +1,16 @@
 using Microsoft.UI.Xaml;
 using System.IO.Pipes;
 using System.Threading;
-using WinRT.Interop;
+using H.NotifyIcon;
 
 namespace CCSwitcher;
 
 /// <summary>
-/// Invisible lifecycle host window required by WinUI 3. Hides itself immediately
-/// on first activation so it never appears in the taskbar or on-screen.
+/// Invisible lifecycle host window required by WinUI 3. It hosts the
+/// <see cref="TrayControl"/> TaskbarIcon (declared in XAML so H.NotifyIcon
+/// registers it on Loaded) and is hidden by <see cref="App"/> via
+/// <c>AppWindow.Hide()</c> right after activation — it never appears on-screen
+/// or in the taskbar, yet stays "open" so the app keeps running.
 ///
 /// Also runs a background named-pipe listener: when a second instance launches,
 /// it sends a "focus" signal which triggers <see cref="_onFocusSignal"/> — wired
@@ -37,41 +40,20 @@ public sealed partial class MainWindow : Window
         this.Activated += OnActivated;
     }
 
+    /// <summary>
+    /// The XAML-declared tray icon. <see cref="App"/> populates its menu/icon
+    /// after the window is activated.
+    /// </summary>
+    public TaskbarIcon TrayIcon => TrayControl;
+
     private void OnActivated(object sender, WindowActivatedEventArgs args)
     {
         if (_initialized) return;
         _initialized = true;
 
-        // Shrink to 0×0 and remove from the taskbar so this host window is invisible.
-        HideWindow();
-
         // Start the pipe listener that wakes up when a second instance signals us.
         _pipeListenerCts = new CancellationTokenSource();
         _ = Task.Run(() => RunPipeListenerAsync(_pipeListenerCts.Token));
-    }
-
-    /// <summary>
-    /// Hides this host window: resize to 0×0 and remove from taskbar via Win32.
-    /// </summary>
-    private void HideWindow()
-    {
-        var hwnd = WindowNative.GetWindowHandle(this);
-
-        // Remove from taskbar by clearing the WS_EX_APPWINDOW style.
-        const int GWL_EXSTYLE = -20;
-        const int WS_EX_APPWINDOW = 0x00040000;
-        const int WS_EX_TOOLWINDOW = 0x00000080;
-
-        int exStyle = NativeMethods.GetWindowLong(hwnd, GWL_EXSTYLE);
-        exStyle = (exStyle & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
-        NativeMethods.SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-
-        // Resize to 0×0 and move off-screen.
-        NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, -32000, -32000, 0, 0,
-            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOZORDER);
-
-        // Hide the window entirely.
-        NativeMethods.ShowWindow(hwnd, NativeMethods.SW_HIDE);
     }
 
     /// <summary>
@@ -108,33 +90,9 @@ public sealed partial class MainWindow : Window
             catch
             {
                 // Transient pipe error — restart the listener after a short pause.
-                await Task.Delay(500, ct).ConfigureAwait(false);
+                try { await Task.Delay(500, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
             }
         }
     }
-}
-
-/// <summary>
-/// Minimal Win32 P/Invoke surface needed to hide the host window.
-/// </summary>
-internal static class NativeMethods
-{
-    internal const int SW_HIDE = 0;
-    internal const uint SWP_NOACTIVATE = 0x0010;
-    internal const uint SWP_NOZORDER = 0x0004;
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    internal static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    internal static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-    internal static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
-        int X, int Y, int cx, int cy, uint uFlags);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-    internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
