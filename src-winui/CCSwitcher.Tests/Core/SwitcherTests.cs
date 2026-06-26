@@ -236,6 +236,35 @@ public sealed class SwitcherTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
+    // 5b. skip-capture (import current login) does not clobber the active blob
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void ApplyAccount_SkipCapture_DoesNotOverwriteActiveOauthBlob()
+    {
+        const string aBlob   = """{"claudeAiOauth":{"accessToken":"a-stored"}}""";
+        const string newBlob = """{"claudeAiOauth":{"accessToken":"new-login"}}""";
+
+        _secrets.Set("a", aBlob);
+        _secrets.Set("b", newBlob);
+
+        var cfg = ConfigWith(OauthAccount("a"), OauthAccount("b"));
+        cfg.ActiveAccountId = "a";
+
+        // The live store now holds a *different* login — as it does right after
+        // importing the current login (the new account "b").
+        _creds.Write(newBlob);
+
+        // Mark "b" active without capture-on-switch-out.
+        Switcher.ApplyAccount(cfg, "b", Deps(), captureOnSwitchOut: false);
+
+        // "a"'s stored blob must be untouched (NOT re-snapshotted from the live
+        // store, which would corrupt it with "b"'s credentials).
+        Assert.Equal(aBlob, _secrets.Get("a"));
+        Assert.Equal("b", cfg.ActiveAccountId);
+    }
+
+    // -----------------------------------------------------------------------
     // 6. oauth_account_with_base_url_keeps_it_after_switch
     // -----------------------------------------------------------------------
 

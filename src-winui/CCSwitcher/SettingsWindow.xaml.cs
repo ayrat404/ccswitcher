@@ -299,7 +299,12 @@ public sealed partial class SettingsWindow : Window
             var account = config.Accounts.Find(a => a.Id == accountId);
             if (account == null) return;
 
-            await ShowAddTokenDialogAsync(editingAccount: account);
+            // OAuth accounts have an auto-managed credential blob; only the
+            // display name and (optional) base URL are meaningful to edit.
+            if (account.AccountType == AccountType.AnthropicOauth)
+                await ShowEditOauthDialogAsync(account);
+            else
+                await ShowAddTokenDialogAsync(editingAccount: account);
         }
     }
 
@@ -418,6 +423,88 @@ public sealed partial class SettingsWindow : Window
     }
 
     // -----------------------------------------------------------------------
+    // Edit OAuth account (name + base URL only)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Edit an Anthropic OAuth account. Only the display name and optional base
+    /// URL are editable — the credential blob is auto-managed (captured on
+    /// switch-out) and auth_kind/token do not apply, so they are not shown.
+    /// </summary>
+    private async Task ShowEditOauthDialogAsync(Account account)
+    {
+        var nameBox = new TextBox
+        {
+            Header          = "Name",
+            PlaceholderText = "Anthropic",
+            Text            = account.Name,
+        };
+
+        var baseUrlBox = new TextBox
+        {
+            Header          = "Base URL (optional)",
+            PlaceholderText = "https://api.anthropic.com",
+            Text            = account.BaseUrl ?? string.Empty,
+        };
+
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(nameBox);
+        panel.Children.Add(baseUrlBox);
+
+        var dialog = new ContentDialog
+        {
+            Title             = "Edit Account",
+            Content           = panel,
+            PrimaryButtonText = "Save",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Primary,
+            XamlRoot          = this.Content.XamlRoot,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        var name    = nameBox.Text.Trim();
+        var baseUrl = baseUrlBox.Text.Trim();
+
+        if (string.IsNullOrEmpty(name))
+        {
+            ShowError("Name is required.");
+            return;
+        }
+
+        await App.StateMutex.WaitAsync();
+        try
+        {
+            var config = _app.GetConfig();
+
+            // Pass the existing auth_kind (null for OAuth) and no new secret so
+            // the credential blob and identity are preserved untouched.
+            AccountManager.UpdateAccount(
+                config,
+                account.Id,
+                name,
+                string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
+                account.AuthKind,
+                newSecret: null,
+                _app.GetSecretStore(),
+                ClaudePaths.AppConfigDir);
+
+            _app.RebuildTray();
+            Refresh();
+            ShowSuccess("Account updated.");
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+        }
+        finally
+        {
+            App.StateMutex.Release();
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Delete Account
     // -----------------------------------------------------------------------
 
@@ -507,6 +594,24 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
+        // Step 1b: block if this login is already imported.
+        var duplicate = Importer.FindDuplicate(
+            candidate,
+            _app.GetConfig().Accounts,
+            _app.GetSecretStore());
+        if (duplicate != null)
+        {
+            var dupDialog = new ContentDialog
+            {
+                Title           = "Import Current Login",
+                Content         = $"This login is already imported as \"{duplicate.Name}\".",
+                CloseButtonText = "OK",
+                XamlRoot        = this.Content.XamlRoot,
+            };
+            await dupDialog.ShowAsync();
+            return;
+        }
+
         // Step 2: show name prompt
         var defaultName = Importer.DefaultName(candidate);
 
@@ -562,6 +667,30 @@ public sealed partial class SettingsWindow : Window
 
             config.Accounts.Add(newAccount);
             ConfigStore.Save(ClaudePaths.AppConfigDir, config);
+
+            // Mark the freshly-imported current login active — it is already the
+            // live login in Claude Code. Skip capture-on-switch-out: the live
+            // credentials are this new account, so capturing them into the old
+            // active account's slot would corrupt it.
+            try
+            {
+                var deps = new SwitchDeps
+                {
+                    SettingsPath    = ClaudePaths.SettingsPath,
+                    ConfigDir       = ClaudePaths.AppConfigDir,
+                    UserConfigPath  = ClaudePaths.FindUserConfig(),
+                    SecretStore     = _app.GetSecretStore(),
+                    CredentialStore = _app.GetCredentialStore(),
+                };
+                Switcher.ApplyAccount(config, newAccount.Id, deps, captureOnSwitchOut: false);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort: the account is already saved; failing to mark it
+                // active must not fail the import.
+                System.Diagnostics.Debug.WriteLine(
+                    $"[CCSwitcher] Mark-active after import failed: {Secrets.Sanitize(ex.Message)}");
+            }
 
             _app.RebuildTray();
             Refresh();

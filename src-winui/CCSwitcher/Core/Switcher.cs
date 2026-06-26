@@ -111,6 +111,14 @@ public static class Switcher
     /// <param name="config">The current app config (mutated in-place on success).</param>
     /// <param name="accountId">Target account id.</param>
     /// <param name="deps">I/O dependencies (stores + paths).</param>
+    /// <param name="captureOnSwitchOut">
+    /// When <see langword="true"/> (default) the currently-active OAuth account's
+    /// live credentials are re-snapshotted before switching (step 2). Pass
+    /// <see langword="false"/> when the live credentials no longer belong to the
+    /// active account — e.g. right after importing the current login, where the
+    /// live blob is the <em>new</em> account, so capturing it into the old
+    /// account's slot would corrupt it.
+    /// </param>
     /// <exception cref="UnknownAccountException">
     /// The target account id was not found. No store was touched.
     /// </exception>
@@ -121,7 +129,11 @@ public static class Switcher
     /// <exception cref="SwitchException">
     /// Any other error during the switch (settings load/write, config persist).
     /// </exception>
-    public static void ApplyAccount(AppConfig config, string accountId, SwitchDeps deps)
+    public static void ApplyAccount(
+        AppConfig config,
+        string accountId,
+        SwitchDeps deps,
+        bool captureOnSwitchOut = true)
     {
         // --- Step 1: validate target up front --------------------------------
         // An unknown id is a typed error and must not touch any store.
@@ -135,7 +147,7 @@ public static class Switcher
         // details are preserved. These keyring writes are intentional and are
         // never rolled back even if a later step fails.
         var activeId = config.ActiveAccountId;
-        if (activeId != null)
+        if (captureOnSwitchOut && activeId != null)
         {
             var activeAccount = config.Accounts.Find(a => a.Id == activeId);
             if (activeAccount != null && activeAccount.AccountType == AccountType.AnthropicOauth)

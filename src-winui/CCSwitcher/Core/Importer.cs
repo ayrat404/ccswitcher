@@ -84,21 +84,6 @@ public abstract class ImportResult
 /// </summary>
 public static class Importer
 {
-    /// <summary>
-    /// Credential-blob fields that change over a session and must NOT take
-    /// part in duplicate comparison.  Removing them yields a stable
-    /// "fingerprint" of the login itself.
-    /// </summary>
-    private static readonly HashSet<string> VolatileBlobFields = new(StringComparer.Ordinal)
-    {
-        "accessToken",
-        "refreshToken",
-        "expiresAt",
-        "expiresAtTimestamp",
-        "tokenResponse",
-        "idToken",
-    };
-
     // -----------------------------------------------------------------------
     // Detect
     // -----------------------------------------------------------------------
@@ -247,24 +232,20 @@ public static class Importer
     {
         var id = Guid.NewGuid().ToString();
 
+        // Duplicate detection is primarily enforced up-front by the UI (which
+        // blocks the import). This stays as a safety net for races and keeps a
+        // single source of truth in FindDuplicate.
+        var dup = FindDuplicate(candidate, existingAccounts, secretStore);
+        var warning = dup is not null
+            ? $"An account with the same login ({dup.Name}) already exists."
+            : null;
+
         Account account;
         string secretValue;
-        string? warning;
 
         switch (candidate)
         {
             case ImportCandidate.Token t:
-            {
-                // Token duplicate: match on base_url + auth_kind.
-                var dup = existingAccounts.FirstOrDefault(a =>
-                    a.AccountType == AccountType.Token &&
-                    a.AuthKind    == t.AuthKind &&
-                    string.Equals(a.BaseUrl, t.BaseUrl, StringComparison.Ordinal));
-
-                warning = dup is not null
-                    ? $"An account with the same provider ({dup.Name}) already exists."
-                    : null;
-
                 account = new Account
                 {
                     Id          = id,
@@ -275,43 +256,8 @@ public static class Importer
                 };
                 secretValue = t.Secret;
                 break;
-            }
 
             case ImportCandidate.Oauth o:
-            {
-                // 1. Identity-based dedup (only when a stable identity is known).
-                warning = null;
-                if (o.Identity is not null)
-                {
-                    var dup = existingAccounts.FirstOrDefault(a =>
-                        a.AccountType == AccountType.AnthropicOauth &&
-                        string.Equals(a.Identity, o.Identity, StringComparison.Ordinal));
-
-                    if (dup is not null)
-                        warning = $"An account with the same identity ({dup.Name}) already exists.";
-                }
-
-                // 2. Blob fingerprint dedup: normalize (strip volatile fields) and
-                //    compare against each existing OAuth account's stored blob.
-                if (warning is null)
-                {
-                    var norm = NormalizeBlob(o.Blob);
-                    if (norm is not null)
-                    {
-                        foreach (var acc in existingAccounts.Where(
-                            a => a.AccountType == AccountType.AnthropicOauth))
-                        {
-                            var stored = secretStore.Get(acc.Id);
-                            if (stored is not null &&
-                                NormalizeBlob(stored) == norm)
-                            {
-                                warning = $"An account with the same login ({acc.Name}) already exists.";
-                                break;
-                            }
-                        }
-                    }
-                }
-
                 account = new Account
                 {
                     Id          = id,
@@ -321,7 +267,6 @@ public static class Importer
                 };
                 secretValue = o.Blob;
                 break;
-            }
 
             default:
                 throw new InvalidOperationException("Unknown ImportCandidate type.");
@@ -336,80 +281,56 @@ public static class Importer
     }
 
     // -----------------------------------------------------------------------
-    // Internal helpers (internal so tests can exercise them)
+    // FindDuplicate
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Normalize an OAuth credential blob into a canonical, comparable string.
-    ///
-    /// Strips the volatile fields so that two snapshots of the *same* login —
-    /// taken before and after Claude Code refreshes its tokens in place —
-    /// compare equal.  Returns <see langword="null"/> if the blob isn't valid JSON.
-    /// Key order is canonical because JsonObject in System.Text.Json uses
-    /// insertion order; we re-parse into a SortedDictionary to guarantee
-    /// deterministic output.
+    /// Find an existing account that represents the same login as
+    /// <paramref name="candidate"/>, or <see langword="null"/> if none.
+    /// <para>
+    /// <b>Token:</b> same provider <em>and</em> key — matches on
+    /// <c>base_url</c> + <c>auth_kind</c> + the actual secret value (read from
+    /// the keyring). Two different keys for the same provider are <em>not</em>
+    /// duplicates.
+    /// </para>
+    /// <para>
+    /// <b>OAuth:</b> identity only — matches on the stable
+    /// <see cref="Account.Identity"/> (accountUuid/email from
+    /// <c>~/.claude.json</c>). When the candidate has no identity, no duplicate
+    /// is reported. (A blob fingerprint is intentionally not used: after
+    /// stripping volatile tokens the blob is not account-unique, so it could
+    /// falsely match a genuinely different account.)
+    /// </para>
     /// </summary>
-    internal static string? NormalizeBlob(string blob)
+    public static Account? FindDuplicate(
+        ImportCandidate candidate,
+        IReadOnlyList<Account> existingAccounts,
+        ISecretStore secretStore)
     {
-        JsonObject parsed;
-        try
+        switch (candidate)
         {
-            var node = JsonNode.Parse(blob);
-            if (node is not JsonObject obj)
-                return null;
-            parsed = obj;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+            case ImportCandidate.Token t:
+                return existingAccounts.FirstOrDefault(a =>
+                    a.AccountType == AccountType.Token &&
+                    a.AuthKind    == t.AuthKind &&
+                    string.Equals(a.BaseUrl, t.BaseUrl, StringComparison.Ordinal) &&
+                    string.Equals(secretStore.Get(a.Id), t.Secret, StringComparison.Ordinal));
 
-        if (parsed.TryGetPropertyValue("claudeAiOauth", out var oauthNode) &&
-            oauthNode is JsonObject oauthObj)
-        {
-            foreach (var key in VolatileBlobFields)
-                oauthObj.Remove(key);
-        }
+            case ImportCandidate.Oauth o:
+                if (o.Identity is null)
+                    return null;
+                return existingAccounts.FirstOrDefault(a =>
+                    a.AccountType == AccountType.AnthropicOauth &&
+                    string.Equals(a.Identity, o.Identity, StringComparison.Ordinal));
 
-        // Re-serialize into a stable key-sorted form so two blobs with the
-        // same stable content but different insertion order compare equal.
-        return SerializeSorted(parsed);
+            default:
+                throw new InvalidOperationException("Unknown ImportCandidate type.");
+        }
     }
 
-    /// <summary>
-    /// Serialize a JsonNode to JSON with keys sorted alphabetically at every level.
-    /// </summary>
-    private static string SerializeSorted(JsonNode? node)
-    {
-        if (node is null)
-            return "null";
-
-        if (node is JsonObject obj)
-        {
-            var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
-            foreach (var (key, value) in obj)
-                sorted[key] = SerializeSorted(value);
-
-            var pairs = sorted.Select(kv => $"\"{EscapeJson(kv.Key)}\":{kv.Value}");
-            return "{" + string.Join(",", pairs) + "}";
-        }
-
-        if (node is JsonArray arr)
-        {
-            var items = arr.Select(SerializeSorted);
-            return "[" + string.Join(",", items) + "]";
-        }
-
-        // Scalar: use the built-in serializer.
-        return node.ToJsonString();
-    }
-
-    private static string EscapeJson(string s) =>
-        s.Replace("\\", "\\\\")
-         .Replace("\"", "\\\"")
-         .Replace("\n", "\\n")
-         .Replace("\r", "\\r")
-         .Replace("\t", "\\t");
+    // -----------------------------------------------------------------------
+    // Internal helpers (internal so tests can exercise them)
+    // -----------------------------------------------------------------------
 
     /// <summary>
     /// Extract a stable identity (email/account_id) from an OAuth credential blob.

@@ -310,7 +310,7 @@ public sealed class ImporterTests : IDisposable
     }
 
     [Fact]
-    public void Import_Token_DuplicateByBaseUrlAndAuthKind_ReturnsWarning()
+    public void Import_Token_DuplicateBySameProviderAndKey_ReturnsWarning()
     {
         var candidate = new ImportCandidate.Token
         {
@@ -323,6 +323,8 @@ public sealed class ImporterTests : IDisposable
             TokenAccount("old-id", AuthKind.AuthToken, "https://api.anthropic.com"),
         };
         var store = new InMemorySecretStore();
+        // Same provider AND same key (secret) → duplicate.
+        store.Set("old-id", "sk-new");
 
         var result = Importer.Import(candidate, "New Work", existing, store);
 
@@ -330,6 +332,28 @@ public sealed class ImporterTests : IDisposable
         Assert.Equal("New Work", warn.Account.Name);
         Assert.Contains("token-old-id", warn.Warning);
         Assert.Contains("already exists", warn.Warning);
+    }
+
+    [Fact]
+    public void Import_Token_SameProviderDifferentKey_NoWarning()
+    {
+        // Same base_url + auth_kind but a different key (secret) → NOT a duplicate.
+        var candidate = new ImportCandidate.Token
+        {
+            Secret   = "sk-new",
+            AuthKind = AuthKind.AuthToken,
+            BaseUrl  = "https://api.anthropic.com",
+        };
+        var existing = new List<Account>
+        {
+            TokenAccount("old-id", AuthKind.AuthToken, "https://api.anthropic.com"),
+        };
+        var store = new InMemorySecretStore();
+        store.Set("old-id", "sk-different");
+
+        var result = Importer.Import(candidate, "Another Key", existing, store);
+
+        Assert.IsType<ImportResult.Created>(result);
     }
 
     [Fact]
@@ -393,10 +417,11 @@ public sealed class ImporterTests : IDisposable
     }
 
     [Fact]
-    public void Import_Oauth_DuplicateByBlobFingerprint_ReturnsWarning()
+    public void Import_Oauth_SameBlobNoIdentity_NotDuplicate()
     {
-        // Same login (identity absent), different volatile tokens — normalized
-        // fingerprint still matches → duplicate.
+        // Without a stable identity we do NOT dedup on the blob fingerprint
+        // (after stripping volatile tokens the blob is not account-unique), so
+        // this is treated as a new account.
         var candidate = new ImportCandidate.Oauth
         {
             Blob     = """{"claudeAiOauth":{"accessToken":"fresh","refreshToken":"r","expiresAt":999}}""",
@@ -406,35 +431,99 @@ public sealed class ImporterTests : IDisposable
         var store    = new InMemorySecretStore();
         store.Set("old-id", """{"claudeAiOauth":{"accessToken":"stale","expiresAt":1}}""");
 
-        var result = Importer.Import(candidate, "Dup OAuth", existing, store);
+        var result = Importer.Import(candidate, "Another OAuth", existing, store);
 
-        var warn = Assert.IsType<ImportResult.CreatedWithWarning>(result);
-        Assert.Contains("oauth-old-id", warn.Warning);
-        Assert.Contains("already exists", warn.Warning);
+        Assert.IsType<ImportResult.Created>(result);
     }
 
     // -----------------------------------------------------------------------
-    // NormalizeBlob tests
+    // FindDuplicate tests
     // -----------------------------------------------------------------------
 
     [Fact]
-    public void NormalizeBlob_StripsVolatileFields()
+    public void FindDuplicate_Token_SameProviderAndKey_ReturnsAccount()
     {
-        var a = Importer.NormalizeBlob("""{"claudeAiOauth":{"accessToken":"x","expiresAt":1,"email":"u@x"}}""");
-        var b = Importer.NormalizeBlob("""{"claudeAiOauth":{"expiresAt":2,"accessToken":"y","email":"u@x"}}""");
+        var candidate = new ImportCandidate.Token
+        {
+            Secret   = "sk-key",
+            AuthKind = AuthKind.AuthToken,
+            BaseUrl  = "https://api.anthropic.com",
+        };
+        var existing = new List<Account>
+        {
+            TokenAccount("old-id", AuthKind.AuthToken, "https://api.anthropic.com"),
+        };
+        var store = new InMemorySecretStore();
+        store.Set("old-id", "sk-key");
 
-        Assert.NotNull(a);
-        Assert.Equal(a, b);
-        // Only stable field remains.
-        Assert.Contains("\"email\":\"u@x\"", a);
-        Assert.DoesNotContain("accessToken", a);
-        Assert.DoesNotContain("expiresAt", a);
+        var dup = Importer.FindDuplicate(candidate, existing, store);
+
+        Assert.NotNull(dup);
+        Assert.Equal("old-id", dup!.Id);
     }
 
     [Fact]
-    public void NormalizeBlob_ReturnsNull_ForInvalidJson()
+    public void FindDuplicate_Token_DifferentKey_ReturnsNull()
     {
-        Assert.Null(Importer.NormalizeBlob("not json"));
+        var candidate = new ImportCandidate.Token
+        {
+            Secret   = "sk-key",
+            AuthKind = AuthKind.AuthToken,
+            BaseUrl  = "https://api.anthropic.com",
+        };
+        var existing = new List<Account>
+        {
+            TokenAccount("old-id", AuthKind.AuthToken, "https://api.anthropic.com"),
+        };
+        var store = new InMemorySecretStore();
+        store.Set("old-id", "sk-other");
+
+        Assert.Null(Importer.FindDuplicate(candidate, existing, store));
+    }
+
+    [Fact]
+    public void FindDuplicate_Oauth_SameIdentity_ReturnsAccount()
+    {
+        var candidate = new ImportCandidate.Oauth
+        {
+            Blob     = """{"claudeAiOauth":{"accessToken":"x"}}""",
+            Identity = "acc-uuid",
+        };
+        var existing = new List<Account> { OauthAccount("old-id", "acc-uuid") };
+        var store    = new InMemorySecretStore();
+
+        var dup = Importer.FindDuplicate(candidate, existing, store);
+
+        Assert.NotNull(dup);
+        Assert.Equal("old-id", dup!.Id);
+    }
+
+    [Fact]
+    public void FindDuplicate_Oauth_DifferentIdentity_ReturnsNull()
+    {
+        var candidate = new ImportCandidate.Oauth
+        {
+            Blob     = """{"claudeAiOauth":{"accessToken":"x"}}""",
+            Identity = "acc-A",
+        };
+        var existing = new List<Account> { OauthAccount("old-id", "acc-B") };
+        var store    = new InMemorySecretStore();
+
+        Assert.Null(Importer.FindDuplicate(candidate, existing, store));
+    }
+
+    [Fact]
+    public void FindDuplicate_Oauth_NullIdentity_ReturnsNull()
+    {
+        var candidate = new ImportCandidate.Oauth
+        {
+            Blob     = """{"claudeAiOauth":{"accessToken":"x"}}""",
+            Identity = null,
+        };
+        var existing = new List<Account> { OauthAccount("old-id", "acc-B") };
+        var store    = new InMemorySecretStore();
+
+        Assert.Null(Importer.FindDuplicate(candidate, existing, store));
     }
 
     // -----------------------------------------------------------------------
