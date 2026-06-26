@@ -223,6 +223,25 @@ Patterns discovered during the C# rewrite that are non-obvious:
   link time with packaging-related errors. Set it in the `.csproj` even though
   you are not producing an MSIX package.
 
+- **`TargetFramework` is `net8.0-windows10.0.22621.0`, driven by
+  `CommunityToolkit.WinUI.Controls.SettingsControls` 8.1.** That package ships
+  its WinUI assemblies *only* under the `net8.0-windows10.0.22621` TFM — the
+  `net8.0-windows10.0.18362` asset is an empty `_._` placeholder. A project
+  targeting a platform version below 22621 (e.g. the original 19041) restores
+  fine but NuGet resolves the empty placeholder, so the `CommunityToolkit.WinUI`
+  namespace silently won't exist and the XAML compiler fails with CS0234. The
+  fix is to bump the platform version to 22621; `TargetPlatformMinVersion` is
+  kept at `10.0.17763.0` so the app still runs on older Windows 10 builds.
+
+- **Native Windows 11 settings UI.** The settings window uses a `MicaBackdrop`
+  with `ExtendsContentIntoTitleBar = true` and a custom draggable `AppTitleBar`
+  grid (set via `SetTitleBar` after `InitializeComponent`). Rows are
+  CommunityToolkit `SettingsCard` / `SettingsExpander` controls grouped under
+  `BodyStrongTextBlockStyle` section headers. Account cards are still built in
+  code-behind (`RebuildAccountList`) rather than via a DataTemplate. The 8.x
+  toolkit needs no resource-dictionary merge in `App.xaml` — default styles load
+  from the package's `generic.xaml` automatically.
+
 - **WinUI 3 `Window` has no `Loaded` event.** Use the `Activated` event
   (fires once the HWND is live) for any initialization that requires the window
   handle. Guard with a `_initialized` flag so the body runs only once.
