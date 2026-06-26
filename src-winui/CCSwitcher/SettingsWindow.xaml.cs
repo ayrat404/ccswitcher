@@ -20,6 +20,7 @@ using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using CommunityToolkit.WinUI.Controls;
 using CCSwitcher.Core;
 
 namespace CCSwitcher;
@@ -47,6 +48,12 @@ public sealed partial class SettingsWindow : Window
         _app = app;
         this.InitializeComponent();
 
+        // Native Windows 11 look: Mica backdrop + content extended into a
+        // custom, draggable title bar (the AppTitleBar grid defined in XAML).
+        this.SystemBackdrop = new MicaBackdrop();
+        this.ExtendsContentIntoTitleBar = true;
+        this.SetTitleBar(AppTitleBar);
+
         // Title-bar icon.
         var appWindow = this.AppWindow;
         try
@@ -60,7 +67,7 @@ public sealed partial class SettingsWindow : Window
             // Icon is cosmetic; ignore failures.
         }
 
-        SizeWindow(widthDip: 560, heightDip: 880);
+        SizeWindow(widthDip: 680, heightDip: 760);
 
         this.Activated += OnFirstActivated;
         this.Closed += OnClosed;
@@ -156,9 +163,10 @@ public sealed partial class SettingsWindow : Window
     }
 
     /// <summary>
-    /// Build the account row list in code-behind so we do not need a
-    /// DataTemplate with x:DataType (which can crash the XAML compiler when
-    /// the view-model type is defined in the same partial class).
+    /// Build the account row list in code-behind as native <see cref="SettingsCard"/>s
+    /// (the same control PowerToys uses). Building them here rather than via a
+    /// DataTemplate keeps the XAML free of a view-model type and avoids the XAML
+    /// compiler crashing on x:DataType for a type in this partial class.
     /// </summary>
     private void RebuildAccountList(AppConfig config)
     {
@@ -167,44 +175,46 @@ public sealed partial class SettingsWindow : Window
         foreach (var account in config.Accounts)
         {
             var isActive = account.Id == config.ActiveAccountId;
+            var isOAuth  = account.AccountType == AccountType.AnthropicOauth;
+            var accountId = account.Id; // capture for closures
 
-            // Row container
-            var row = new Border
+            // Description: account type, plus the base URL when present.
+            var typeText = isOAuth ? "Anthropic OAuth" : "Token";
+            var description = string.IsNullOrEmpty(account.BaseUrl)
+                ? typeText
+                : $"{typeText} · {account.BaseUrl}";
+
+            var card = new SettingsCard
             {
-                Padding = new Thickness(8, 6, 8, 6),
-                BorderBrush = (Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"],
-                BorderThickness = new Thickness(0, 0, 0, 1),
+                Header      = account.Name,
+                Description = description,
             };
 
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            // Name
-            var nameBlock = new TextBlock
+            // Header icon: a filled accent check for the active account,
+            // a neutral contact glyph otherwise.
+            card.HeaderIcon = new FontIcon
             {
-                Text = isActive ? $"✓  {account.Name}" : account.Name,
-                FontWeight = isActive
-                    ? Microsoft.UI.Text.FontWeights.SemiBold
-                    : Microsoft.UI.Text.FontWeights.Normal,
+                Glyph = isActive ? "" : "", // CheckMark : Contact
+                Foreground = isActive
+                    ? (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"]
+                    : (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            };
+
+            // Right-aligned content: type badge + Edit / Delete icon buttons.
+            var content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
                 VerticalAlignment = VerticalAlignment.Center,
-                TextWrapping = TextWrapping.NoWrap,
-                TextTrimming = TextTrimming.CharacterEllipsis,
             };
-            Grid.SetColumn(nameBlock, 0);
 
-            // Type badge
-            var isOAuth = account.AccountType == AccountType.AnthropicOauth;
             var badge = new Border
             {
                 Background = new SolidColorBrush(isOAuth
                     ? Windows.UI.Color.FromArgb(255, 0, 120, 215)    // blue for OAuth
                     : Windows.UI.Color.FromArgb(255, 100, 100, 100)), // grey for Token
-                CornerRadius = new CornerRadius(3),
-                Padding = new Thickness(6, 2, 6, 2),
-                Margin = new Thickness(8, 0, 8, 0),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 2, 8, 2),
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = new TextBlock
                 {
@@ -213,38 +223,32 @@ public sealed partial class SettingsWindow : Window
                     Foreground = new SolidColorBrush(Colors.White),
                 },
             };
-            Grid.SetColumn(badge, 1);
 
-            // Edit button
-            var accountId = account.Id; // capture for closure
             var editBtn = new Button
             {
-                Content = "Edit",
-                Margin = new Thickness(0, 0, 4, 0),
+                Content = new FontIcon { Glyph = "", FontSize = 14 }, // Edit
                 Tag = accountId,
             };
+            ToolTipService.SetToolTip(editBtn, "Edit");
             editBtn.Click += EditAccountBtn_Click;
-            Grid.SetColumn(editBtn, 2);
 
-            // Delete button
             var deleteBtn = new Button
             {
-                Content = "Delete",
+                Content = new FontIcon { Glyph = "", FontSize = 14 }, // Delete
                 Tag = accountId,
             };
+            ToolTipService.SetToolTip(deleteBtn, "Delete");
             deleteBtn.Click += DeleteAccountBtn_Click;
-            Grid.SetColumn(deleteBtn, 3);
 
-            grid.Children.Add(nameBlock);
-            grid.Children.Add(badge);
-            grid.Children.Add(editBtn);
-            grid.Children.Add(deleteBtn);
+            content.Children.Add(badge);
+            content.Children.Add(editBtn);
+            content.Children.Add(deleteBtn);
 
-            row.Child = grid;
-            AccountsPanel.Children.Add(row);
+            card.Content = content;
+            AccountsPanel.Children.Add(card);
         }
 
-        NoAccountsText.Visibility = config.Accounts.Count == 0
+        NoAccountsCard.Visibility = config.Accounts.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
     }
