@@ -1,14 +1,17 @@
 # ccswitcher
 
-A cross-platform (Windows + macOS) tray / menu-bar app for switching between
-multiple Claude Code accounts — native Anthropic OAuth logins and `token`
-accounts (API key / third-party providers) — plus a global HTTP proxy toggle and
-per-account extra environment variables.
+A native Windows tray app for switching Claude Code between multiple accounts —
+native Anthropic OAuth logins and `token` accounts (API key / third-party
+providers) — plus a global HTTP proxy toggle and per-account extra environment
+variables.
 
 Switching works by editing Claude Code's configuration
 (`~/.claude/settings.json` `env` block and, for OAuth, the credentials store).
 The next `claude` launch picks up the selected account; already-running sessions
 are unaffected.
+
+ccswitcher is a WinUI 3 app distributed as a self-contained single `.exe` with
+no runtime dependency on the target machine.
 
 ## Features
 
@@ -22,7 +25,8 @@ are unaffected.
   it globally. Proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) are
   injected into the active account's environment.
 - **Per-account extra environment variables** — each account can define custom
-  env vars that are applied when that account is active.
+  env vars that are applied when that account is active, editable from the
+  add/edit account dialog.
 
 ## How switching works
 
@@ -32,9 +36,8 @@ of it. Switching involves editing two locations:
 1. **`~/.claude/settings.json`** — the `env` block is updated with the active
    account's configuration (auth token, base URL, proxy settings, extra env).
 2. **OAuth credentials store** — for Anthropic OAuth accounts, the credential
-   snapshot is restored from the OS keyring to the appropriate platform store
-   (Windows: `~/.claude/.credentials.json`; macOS: Keychain service
-   `Claude Code-credentials`).
+   snapshot is restored from the OS keyring to `~/.claude/.credentials.json`
+   (atomic write + timestamped backup).
 
 ### Managed keys contract
 
@@ -61,104 +64,49 @@ go stale. ccswitcher implements **capture-on-switch-out**:
 
 ## Storage locations
 
-- **Non-secret app config**: `%APPDATA%/ccswitcher/config.json` (Windows),
-  `~/Library/Application Support/ccswitcher/config.json` (macOS). Holds
-  account metadata, proxy settings, and the active account ID — no secrets.
-- **Secrets**: OS keyring, service `ccswitcher`, account = account ID. Tokens and
-  OAuth credential blobs are stored here, never in `config.json` or logs.
+- **Non-secret app config**: `%APPDATA%/ccswitcher/config.json`. Holds account
+  metadata, proxy settings, and the active account ID — no secrets.
+- **Secrets**: Windows Credential Manager (via `PasswordVault`), keyed by
+  account ID. Tokens and OAuth credential blobs are stored here, never in
+  `config.json` or logs.
 - **Backups**: a dedicated `backups/` directory next to each managed file,
   containing timestamped copies with a retention cap. Every destructive write
   is atomic (temp file + rename) and preceded by a backup.
 
 ## Build / run
 
-Prerequisites: a Rust toolchain (`rustup`, stable). On Windows the MSVC build
-tools are required; on macOS the standard Xcode command-line tools.
+Prerequisites: the .NET 8 SDK and the Windows App SDK workload.
 
 ```sh
-# from the repository root
-cd src-tauri
-cargo build      # build the core + app
-cargo test       # run the core unit tests
-cargo tauri dev  # run the tray app in development mode
-```
-
-For a release build:
-
-```sh
-cargo tauri build
-```
-
-The Rust core (`src-tauri/src/core`) is platform-agnostic and fully unit-tested
-with in-memory mocks, so `cargo test` does not require a real OS keychain.
-
-## WinUI 3 (Windows)
-
-The `src-winui/` directory contains a native WinUI 3 implementation for Windows,
-distributed as a self-contained single `.exe` with no runtime dependency on the
-target machine.
-
-### Build
-
-```
 cd src-winui
+
+# build the solution
 dotnet build CCSwitcher.sln
-```
 
-### Run tests
-
-```
-cd src-winui
+# run the core unit tests (no WinUI dependency)
 dotnet test CCSwitcher.Tests/CCSwitcher.Tests.csproj
 ```
 
 ### Publish (single self-contained .exe)
 
-```
+```sh
 cd src-winui
-dotnet publish CCSwitcher/CCSwitcher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish/
+dotnet publish CCSwitcher/CCSwitcher.csproj -c Release -r win-x64 \
+    --self-contained true -p:PublishSingleFile=true -o publish/
 ```
+
+The output `publish/CCSwitcher.exe` has no external runtime dependency. Run it
+to launch the app; the tray icon appears in the system tray.
 
 ## Installation / Distribution
 
-Currently ccswitcher must be built from source. Pre-built binaries for Windows
-and macOS may be provided in future releases.
-
-### Building from source
-
-Follow the "Build / run" section above. The `cargo tauri build` command produces
-platform-specific installers in `src-tauri/target/release/bundle/`.
-
-### Windows
-
-After building, the installer is at:
-```
-src-tauri/target/release/bundle/msi/ccswitcher_<version>_x64_en-US.msi
-```
-
-Run the MSI to install ccswitcher. The tray icon will appear in the system
-tray after the first launch.
-
-### macOS
-
-After building, the app bundle is at:
-```
-src-tauri/target/release/bundle/dmg/ccswitcher_<version>.dmg
-```
-
-Open the DMG and drag ccswitcher to Applications. On first launch, you may be
-prompted to grant Keychain access for the `Claude Code-credentials` service.
+CI builds the self-contained `.exe` on every push to `main` and attaches it to a
+GitHub Release when a `v*` tag is pushed (see `.github/workflows/build-winui.yml`).
+Otherwise, build from source with the publish command above.
 
 ## Troubleshooting
 
-### Keychain permission prompt (macOS)
-
-When switching to an Anthropic OAuth account for the first time, macOS will
-prompt: *"ccswitcher wants to access your keychain."* This is expected —
-ccswitcher needs to read/write the `Claude Code-credentials` entry to manage
-OAuth snapshots. Click "Always Allow" to avoid future prompts.
-
-### Tray icon not appearing (Windows)
+### Tray icon not appearing
 
 Some system tray configurations hide icons by default. Click the up-arrow in
 the system tray to reveal hidden icons, then drag ccswitcher to the visible
@@ -183,8 +131,8 @@ then use "Import current login" in ccswitcher to refresh the snapshot.
 
 ## Configuration schema reference
 
-The `config.json` file (stored in the OS-specific app data directory) has the
-following structure:
+The `config.json` file (stored in `%APPDATA%/ccswitcher/`) has the following
+structure:
 
 ```jsonc
 {
@@ -216,23 +164,27 @@ following structure:
 }
 ```
 
-Secrets (tokens and OAuth blobs) are stored in the OS keyring under the
-`ccswitcher` service, keyed by account ID. They never appear in `config.json`.
+Secrets (tokens and OAuth blobs) are stored in Windows Credential Manager,
+keyed by account ID. They never appear in `config.json`.
 
 ## Architecture
 
-- **`src-tauri/src/core/`** — platform-agnostic Rust core: data model, config
-  store, secret store, credential store, env-merge engine, switching logic,
-  import detection. Fully unit-testable with in-memory mocks.
-- **Platform adapters behind traits**:
-  - `CredentialStore` — OAuth credential snapshot/restore. Windows =
-    `~/.claude/.credentials.json` (atomic write + timestamped backup);
-    macOS = Keychain service `Claude Code-credentials`.
-  - `SecretStore` — per-account secrets (tokens, OAuth credential snapshots)
-    via the `keyring` crate.
-- **`src-tauri/src/` (bin/lib)** — Tauri runtime: commands, tray menu, settings
-  window. Thin shell over the core. The library crate (`ccswitcher_lib`) holds
-  the core so `cargo test` runs without a webview.
+- **`src-winui/CCSwitcher/Core/`** — platform-agnostic C# core: data model,
+  config store, secret store, credential store, env-merge engine, switching
+  logic, import detection. Fully unit-testable with in-memory mocks. Key
+  classes: `Models`, `AtomicFile`, `ClaudePaths`, `ConfigStore`,
+  `PasswordVaultSecretStore`, `CredentialStore`, `SettingsEnv`, `EnvBuilder`,
+  `Switcher`, `Proxy`, `Importer`, `AccountManager`.
+- **Platform adapters behind interfaces**:
+  - `CredentialStore` — OAuth credential snapshot/restore to
+    `~/.claude/.credentials.json` (atomic write + timestamped backup).
+  - `ISecretStore` — per-account secrets (tokens, OAuth credential snapshots)
+    via Windows Credential Manager (`PasswordVault`).
+- **`src-winui/CCSwitcher/` (UI)** — WinUI 3 shell: tray icon
+  (`H.NotifyIcon.WinUI`) and a `Window`-based settings page. A thin shell over
+  the core.
+- **`src-winui/CCSwitcher.Tests/`** — xUnit test project that compiles the
+  `Core/` sources directly (no WinUI dependency), injecting in-memory mocks.
 
 See `CLAUDE.md` for deeper architecture notes and implementation conventions.
 

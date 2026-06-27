@@ -1,19 +1,5 @@
-# Rust / Cargo
-/src-tauri/target/
-target/
-**/*.rs.bk
-*.pdb
-
-# Tauri generated
-/src-tauri/gen/
-
-# dist/ is the Tauri frontendDist; its HTML/JS/CSS are the frontend source and
-# are tracked directly, so a fresh clone can build with no frontend build step.
-/dist/*
-!/dist/index.html
-!/dist/settings.html
-!/dist/*.js
-!/dist/*.css
+# Build output
+publish/
 
 # OS / editor
 .DS_Store

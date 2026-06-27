@@ -4,32 +4,29 @@ Guidance for working in this repository.
 
 ## What this is
 
-A Tauri 2 tray app that switches Claude Code between multiple accounts by editing
-Claude Code's own config (`~/.claude/settings.json` and the OAuth credential
-store). ccswitcher is an external manager — Claude Code itself is unchanged and
-unaware of it.
+A native Windows (WinUI 3) tray app that switches Claude Code between multiple
+accounts by editing Claude Code's own config (`~/.claude/settings.json` and the
+OAuth credential store). ccswitcher is an external manager — Claude Code itself
+is unchanged and unaware of it. It ships as a single self-contained `.exe`.
 
 ## Architecture
 
-- **`src-tauri/src/core/`** — platform-agnostic Rust core: data model, config
-  store, secret store, credential store, env-merge engine, switching logic,
-  import detection. Fully unit-testable with in-memory mocks.
-- **Platform adapters behind traits**:
-  - `CredentialStore` — OAuth credential snapshot/restore. Windows =
-    `~/.claude/.credentials.json` (atomic write + timestamped backup);
-    macOS = Keychain service `Claude Code-credentials`.
-  - `SecretStore` — per-account secrets (tokens, OAuth credential snapshots)
-    via the `keyring` crate.
-- **`src-tauri/src/` (bin/lib)** — Tauri runtime: commands, tray menu, settings
-  window. Thin shell over the core. The library crate (`ccswitcher_lib`) holds
-  the core so `cargo test` runs without a webview.
-- **`src-winui/`** — native WinUI 3 C# rewrite for Windows. Mirrors the Rust
-  core's module structure in `Core/` and ships as a single self-contained `.exe`.
-  Key classes: `Models`, `AtomicFile`, `ClaudePaths`, `ConfigStore`,
+- **`src-winui/CCSwitcher/Core/`** — platform-agnostic C# core: data model,
+  config store, secret store, credential store, env-merge engine, switching
+  logic, import detection. Fully unit-testable with in-memory mocks. Key
+  classes: `Models`, `AtomicFile`, `ClaudePaths`, `ConfigStore`,
   `PasswordVaultSecretStore`, `CredentialStore`, `SettingsEnv`, `EnvBuilder`,
-  `Switcher`, `Proxy`, `Importer`, `AccountManager`. UI layer uses
-  `H.NotifyIcon.WinUI` for the system tray and WinUI 3 `Window` for the
-  settings page.
+  `Switcher`, `Proxy`, `Importer`, `AccountManager`.
+- **Platform adapters behind interfaces**:
+  - `CredentialStore` — OAuth credential snapshot/restore to
+    `~/.claude/.credentials.json` (atomic write + timestamped backup).
+  - `ISecretStore` — per-account secrets (tokens, OAuth credential snapshots)
+    via Windows Credential Manager (`PasswordVault`).
+- **`src-winui/CCSwitcher/` (UI)** — WinUI 3 shell: tray icon
+  (`H.NotifyIcon.WinUI`) and a `Window`-based settings page. A thin shell over
+  the core.
+- **`src-winui/CCSwitcher.Tests/`** — xUnit test project that compiles the
+  `Core/` sources directly (no WinUI dependency), injecting in-memory mocks.
 
 ## Two invariants (do not violate)
 
@@ -48,105 +45,116 @@ unaware of it.
 
 ## Storage locations
 
-- Non-secret app config: `%APPDATA%/ccswitcher/config.json` (Windows),
-  `~/Library/Application Support/ccswitcher/config.json` (macOS).
-- Secrets: OS keyring, service `ccswitcher`, account = account id. Never written
-  to `config.json` or logs.
+- Non-secret app config: `%APPDATA%/ccswitcher/config.json`.
+- Secrets: Windows Credential Manager (`PasswordVault`), keyed by account id.
+  Never written to `config.json` or logs.
 - Backups: a dedicated `backups/` dir, timestamped copies with a retention cap;
   every destructive write is atomic (temp + rename) and preceded by a backup.
 
 ## Build / test
 
 ```sh
-cd src-tauri
-cargo build
-cargo test
+cd src-winui
+dotnet build CCSwitcher.sln
+dotnet test CCSwitcher.Tests/CCSwitcher.Tests.csproj
+```
+
+Publish the self-contained single `.exe`:
+
+```sh
+cd src-winui
+dotnet publish CCSwitcher/CCSwitcher.csproj -c Release -r win-x64 \
+    --self-contained true -p:PublishSingleFile=true -o publish/
 ```
 
 ## Conventions discovered during implementation
 
-### Module structure under `core/`
+### Module structure under `Core/`
 
-Each module in `src-tauri/src/core/` has a single responsibility and is
+Each class in `src-winui/CCSwitcher/Core/` has a single responsibility and is
 testable in isolation:
 
-- `model.rs` — data structures (Account, AppConfig, etc.) with serde bounds
-- `atomic.rs` — low-level atomic write and timestamped backup primitives
-- `claude_paths.rs` — path resolution for Claude Code config
-- `config_store.rs` — load/save ccswitcher's own config.json
-- `secret_store.rs` — OS keyring abstraction with in-memory mock for tests
-- `credential_store.rs` — OAuth credential snapshot/restore, platform-specific
-- `settings_env.rs` — parse and merge Claude Code's settings.json env block
-- `env_builder.rs` — construct env for a target account (token vs OAuth, proxy)
-- `switcher.rs` — the main switching flow (capture-on-switch-out, apply account)
-- `proxy.rs` — proxy toggle (lighter than full switch, no credential I/O)
-- `import.rs` — detect and import the current Claude Code login
+- `Models.cs` — data structures (`Account`, `AppConfig`, etc.) with
+  `System.Text.Json` attributes
+- `AtomicFile.cs` — low-level atomic write and timestamped backup primitives
+- `ClaudePaths.cs` — path resolution for Claude Code config
+- `ConfigStore.cs` — load/save ccswitcher's own config.json
+- `PasswordVaultSecretStore.cs` / `ISecretStore` — OS secret store abstraction
+  with in-memory mock for tests
+- `CredentialStore.cs` — OAuth credential snapshot/restore
+- `SettingsEnv.cs` — parse and merge Claude Code's settings.json env block
+- `EnvBuilder.cs` — construct env for a target account (token vs OAuth, proxy)
+- `Switcher.cs` — the main switching flow (capture-on-switch-out, apply account)
+- `Proxy.cs` — proxy toggle (lighter than full switch, no credential I/O)
+- `Importer.cs` — detect and import the current Claude Code login
+- `AccountManager.cs` — add/update/delete account CRUD
 
-### Trait-based adapter pattern
+### Interface-based adapter pattern
 
-Platform-specific I/O (keyring, credential store) sits behind traits:
+Platform-specific I/O (secret store, credential store) sits behind interfaces:
 
-- Define a trait with the methods the core needs (`SecretStore`, `CredentialStore`)
-- Provide a real implementation (`KeyringSecretStore`, `FileCredentialStore`,
-  `KeychainCredentialStore`) gated by `#[cfg(target_os = "...")]`
+- Define an interface with the methods the core needs (`ISecretStore`,
+  `ICredentialStore`)
+- Provide a real implementation (`PasswordVaultSecretStore`, the file-based
+  `CredentialStore`), guarding WinRT-only APIs with conditional compilation
 - Provide an in-memory mock for tests (`InMemorySecretStore`,
   `InMemoryCredentialStore`)
-- Core functions accept `impl Trait` or `Box<dyn Trait>` so tests inject mocks
+- Core methods accept the interface so tests inject mocks
 
-This pattern keeps the core platform-agnostic and fully unit-testable without
-a real OS keychain or filesystem.
+This keeps the core platform-agnostic and fully unit-testable without a real OS
+keychain or filesystem.
 
-### Error handling pattern
+### Stateless core helpers
 
-Each core module defines its own error enum with variants for the failure modes
-that module can encounter. These errors propagate through `Result` types and
-are eventually converted to a unified `CommandError` in the Tauri commands layer.
-
-- Use `thiserror` for error enums with `#[from]` on variants that wrap other errors
-- Keep error messages descriptive but avoid leaking secrets (tokens, credential
-  blobs)
-- In `commands.rs`, map domain errors to `CommandError` with a `kind` field for
-  frontend conditional handling
-
-### Mutex serialization
-
-All mutating operations (switch account, add/update/delete account, toggle proxy,
-import) acquire a single async mutex in `AppState` before touching `config.json`
-or `settings.json`. This prevents interleaved read-modify-write races.
-
-- The mutex is `Arc<Mutex<AppConfig>>` so it's shared across all command handlers
-- Even read-only commands acquire the mutex to avoid seeing partially-mutated state
-- The mutex is held only for the duration of the config read/write; I/O operations
-  that don't touch config (credential snapshot, keyring) can run outside the lock
+The `Core/` classes hold no state. Methods like `AccountManager.AddTokenAccount`
+receive the mutable `AppConfig` and all required dependencies (secret store,
+config directory) as parameters, so they are fully testable without a live OS
+keyring or filesystem.
 
 ### Atomic write + backup pattern
 
 Every destructive write to `settings.json`, `config.json`, or `.credentials.json`
-follows the same sequence:
+follows the same sequence (`AtomicFile`):
 
 1. Create a timestamped backup in `backups/<filename>.<timestamp>.bak`
 2. Prune old backups to keep only the newest N (default: 10)
 3. Write to a temp file in the same directory
-4. Rename the temp file over the target (atomic on Windows, macOS, Linux)
+4. Rename the temp file over the target (atomic on Windows)
 
 This ensures the target file is never left half-written, and a rollback is always
 available from the backups directory.
+
+### Mutex serialization
+
+All mutating operations (switch account, add/update/delete account, toggle
+proxy, import) acquire a single app-wide `App.StateMutex` (a `SemaphoreSlim`)
+before touching `config.json` or `settings.json`. This prevents interleaved
+read-modify-write races. The lock is held only for the duration of the config
+read/write; I/O that doesn't touch config (credential snapshot, keyring) can run
+outside the lock.
 
 ### Testing approach
 
 - **Unit tests first**: Write tests alongside or immediately after the code.
 - **Success + error scenarios**: Every core function has tests for both happy
   path and failure modes (missing files, invalid JSON, keyring errors, etc.).
-- **Mock the outside**: Use in-memory mocks for `SecretStore` and
-  `CredentialStore` so tests run without real OS keychain/Filesystem dependencies.
-- **Test against the contract**: For `merge_env`, verify that managed keys are
-  replaced, user keys survive, and the union of old+new managed keys is stripped.
+- **Mock the outside**: Use in-memory mocks for `ISecretStore` and
+  `ICredentialStore` so tests run without real OS keychain/filesystem
+  dependencies. Filesystem-touching tests use isolated temp dirs and clean up
+  via `IDisposable`.
+- **Test against the contract**: For `SettingsEnv.MergeEnv`, verify that managed
+  keys are replaced, user keys survive, and the union of old+new managed keys is
+  stripped.
+- The test project pulls `Core\**\*.cs` via a `<Compile Include>` (not a
+  `ProjectReference`) so it targets plain `net8.0` and never loads WinUI/Windows
+  App SDK assemblies. Only `Core/` classes are testable this way; UI code-behind
+  is not covered.
 
 ### Idempotency where possible
 
 The switching flow is designed to be idempotent: re-running the same switch heals
-any partial cross-store state from an aborted run. This is especially important
-because the operation spans three independent stores (keyring, credential store,
+any partial cross-store state from an aborted run. This matters because the
+operation spans three independent stores (keyring, credential store,
 settings/config files) and is not transactional across them.
 
 - Credential restore failing after settings write: re-run the switch and it will
@@ -157,66 +165,26 @@ settings/config files) and is not transactional across them.
 Non-idempotent operations (e.g., adding an account) are explicitly marked and
 validated in the UI.
 
-### Frontend integration pattern
+### UI integration pattern
 
-The Tauri commands layer (`src-tauri/src/commands.rs`) exposes the core's
-functionality to the frontend (settings window) and tray event handlers.
+The settings window code-behind (`SettingsWindow.xaml.cs`) and tray menu drive
+the core. After any state-changing operation:
 
-**Command signature pattern:**
-```rust
-#[tauri::command]
-pub async fn some_command(
-    params: Params,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<ResponseType, CommandError>
-```
+1. Acquire `App.StateMutex`.
+2. Call the relevant `Core/` method (`Switcher`, `AccountManager`, `Proxy`,
+   `Importer`), which writes `config.json`/`settings.json` atomically.
+3. Call `App.RebuildTray()` and `Refresh()` to reflect the new state.
+4. Show inline feedback via `ShowSuccess` / `ShowError`; error messages are
+   sanitized with `Secrets.Sanitize` to avoid leaking tokens.
+5. Release the mutex in a `finally` block.
 
-**State access:**
-- `state.mutex.lock().await` acquires the single async mutex for serialized
-  config access
-- All mutating commands (`switch_account`, `add_token_account`, `update_account`,
-  `delete_account`, `set_proxy_enabled`, `import_current`) must acquire this lock
-- The lock is held only during config read/write; I/O that doesn't touch config
-  (credential store, keyring) can run outside the lock
-
-**Notification pattern:**
-- Commands emit `notification` events via `app.emit()` for success/error/warning
-- Events use `NotificationEvent` enum (`Success`, `Error`, `Warning`)
-- Error messages are sanitized via `sanitize_secrets()` to prevent secret leakage
-- The frontend (`settings.js`) listens for these events to show inline feedback
-
-### Tray menu rebuild pattern
-
-The tray menu must reflect the current app state (active account, proxy status).
-After any state-changing operation:
-
-1. The command handler acquires the mutex and updates `config.json`
-2. On success, the handler emits an event (`proxy_toggle`, `switch_account`)
-3. The main.rs listener receives the event and calls `update_tray_icon()`
-4. `update_tray_icon()` clones the config (under lock) and rebuilds the menu
-
-**Why this pattern?**
-- The Tauri tray API doesn't support fine-grained menu updates; we rebuild
-- The state snapshot ensures the menu reflects the state at the time of rebuild
-- The mutex prevents races between menu rebuild and config updates
-
-**Example flow:**
-```
-user clicks proxy toggle
-  -> tray emits "tray_toggle_proxy" event
-  -> main.rs listener spawns async task
-  -> task acquires mutex, toggles proxy.enabled
-  -> task writes config.json (atomic + backup)
-  -> task emits "proxy_toggle" event on success
-  -> main.rs listener calls update_tray_icon()
-  -> update_tray_icon() acquires mutex, clones config
-  -> build_tray_menu() renders menu with updated proxy state
-```
+Add/edit account dialogs are built imperatively in code-behind as
+`ContentDialog`s (not XAML), and account rows are built in code-behind
+(`RebuildAccountList`) rather than via a DataTemplate.
 
 ### WinUI 3 (src-winui/) conventions
 
-Patterns discovered during the C# rewrite that are non-obvious:
+Patterns discovered during implementation that are non-obvious:
 
 - **`EnableMsixTooling=true` required for WindowsAppSDK 1.6.x with
   `PublishSingleFile`.** Without this MSBuild property the publish fails at
