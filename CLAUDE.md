@@ -9,6 +9,13 @@ accounts by editing Claude Code's own config (`~/.claude/settings.json` and the
 OAuth credential store). ccswitcher is an external manager — Claude Code itself
 is unchanged and unaware of it. It ships as a single self-contained `.exe`.
 
+The platform-independent behaviour contract lives in **`docs/spec.md`** — the
+on-disk `config.json` shape, managed-keys rule, OAuth capture-on-switch-out,
+atomic-write/backup format, switch flow, import logic, and keychain naming.
+Any native port (e.g. a future macOS app) must conform to it byte-for-byte where
+it shares files/keychain entries with this build. Update `docs/spec.md` in the
+same change whenever you alter any of that behaviour.
+
 ## Architecture
 
 - **`src-winui/CCSwitcher/Core/`** — platform-agnostic C# core: data model,

@@ -186,7 +186,9 @@ keyed by account ID. They never appear in `config.json`.
 - **`src-winui/CCSwitcher.Tests/`** — xUnit test project that compiles the
   `Core/` sources directly (no WinUI dependency), injecting in-memory mocks.
 
-See `CLAUDE.md` for deeper architecture notes and implementation conventions.
+See `CLAUDE.md` for deeper architecture notes and implementation conventions,
+and [`docs/spec.md`](docs/spec.md) for the platform-independent behaviour spec
+(the contract any native port — e.g. macOS — must conform to).
 
 ## License
 
