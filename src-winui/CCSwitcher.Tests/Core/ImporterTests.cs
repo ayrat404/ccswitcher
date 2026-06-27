@@ -147,15 +147,19 @@ public sealed class ImporterTests : IDisposable
     }
 
     [Fact]
-    public void Detect_FallsBackToOauth_WhenTokenIsManaged()
+    public void Detect_ReturnsNull_WhenManagedTokenIsLive_IgnoresStaleOauthBlob()
     {
+        // A managed AUTH_TOKEN present in env means a ccswitcher token account is
+        // the live login (Claude Code prefers env tokens over OAuth). The OAuth
+        // blob on disk is leftover from a previously-active OAuth account and must
+        // NOT be surfaced as a candidate.
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-123"}}""");
         var creds = new InMemoryCredentialStore();
         creds.Write("""{"claudeAiOauth":{"accessToken":"a"}}""");
 
         var result = Importer.Detect(["ANTHROPIC_AUTH_TOKEN"], sp, null, creds);
 
-        Assert.IsType<ImportCandidate.Oauth>(result);
+        Assert.Null(result);
     }
 
     [Fact]
@@ -524,6 +528,88 @@ public sealed class ImporterTests : IDisposable
         var store    = new InMemorySecretStore();
 
         Assert.Null(Importer.FindDuplicate(candidate, existing, store));
+    }
+
+    // -----------------------------------------------------------------------
+    // FindCurrentManagedAccount tests
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void FindCurrentManagedAccount_ReturnsActiveToken_WhenItsManagedTokenIsLive()
+    {
+        // Active token account whose managed AUTH_TOKEN is present in env and
+        // matches the secret in the keyring → it is the current login.
+        var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-live","ANTHROPIC_BASE_URL":"https://api.z.ai/api/anthropic"}}""");
+        var store = new InMemorySecretStore();
+        store.Set("zai", "sk-live");
+
+        var accounts = new List<Account>
+        {
+            TokenAccount("zai", AuthKind.AuthToken, "https://api.z.ai/api/anthropic"),
+        };
+
+        var result = Importer.FindCurrentManagedAccount(
+            accounts, "zai", ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"], sp, store);
+
+        Assert.NotNull(result);
+        Assert.Equal("zai", result!.Id);
+    }
+
+    [Fact]
+    public void FindCurrentManagedAccount_ReturnsNull_WhenNoActiveAccount()
+    {
+        var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-live"}}""");
+        var store = new InMemorySecretStore();
+
+        var result = Importer.FindCurrentManagedAccount(
+            [], null, ["ANTHROPIC_AUTH_TOKEN"], sp, store);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void FindCurrentManagedAccount_ReturnsNull_WhenActiveIsOauth()
+    {
+        // OAuth-active is handled by the normal Detect + FindDuplicate path.
+        var sp    = WriteSettings("""{"env":{}}""");
+        var store = new InMemorySecretStore();
+        var accounts = new List<Account> { OauthAccount("anthropic", "acc-uuid") };
+
+        var result = Importer.FindCurrentManagedAccount(
+            accounts, "anthropic", [], sp, store);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void FindCurrentManagedAccount_ReturnsNull_WhenKeyNotManaged()
+    {
+        // Active token account but its auth key is not in managed_keys (ccswitcher
+        // is not driving it) → don't claim it as the current managed login.
+        var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-live"}}""");
+        var store = new InMemorySecretStore();
+        store.Set("zai", "sk-live");
+        var accounts = new List<Account> { TokenAccount("zai", AuthKind.AuthToken, "https://api.z.ai") };
+
+        var result = Importer.FindCurrentManagedAccount(accounts, "zai", [], sp, store);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void FindCurrentManagedAccount_ReturnsNull_WhenLiveTokenDiffersFromStored()
+    {
+        // The env token was swapped manually and no longer matches the stored
+        // secret → it's not the active account's login; fall through to Detect.
+        var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-different"}}""");
+        var store = new InMemorySecretStore();
+        store.Set("zai", "sk-live");
+        var accounts = new List<Account> { TokenAccount("zai", AuthKind.AuthToken, "https://api.z.ai") };
+
+        var result = Importer.FindCurrentManagedAccount(
+            accounts, "zai", ["ANTHROPIC_AUTH_TOKEN"], sp, store);
+
+        Assert.Null(result);
     }
 
     // -----------------------------------------------------------------------

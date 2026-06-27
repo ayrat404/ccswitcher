@@ -575,6 +575,31 @@ public sealed partial class SettingsWindow : Window
 
     private async Task RunImportFlowAsync()
     {
+        // Step 0: is the current login already a managed account?
+        // When a ccswitcher token account is active and its token is still live in
+        // settings.json, importing would just re-import it. Detect this up front
+        // for a precise message — and so we never surface a stale OAuth credential
+        // blob left on disk by a *different* (previously-active) account.
+        var initialConfig = _app.GetConfig();
+        var alreadyManaged = Importer.FindCurrentManagedAccount(
+            initialConfig.Accounts,
+            initialConfig.ActiveAccountId,
+            initialConfig.ManagedKeys,
+            ClaudePaths.SettingsPath,
+            _app.GetSecretStore());
+        if (alreadyManaged != null)
+        {
+            var alreadyDialog = new ContentDialog
+            {
+                Title           = "Import Current Login",
+                Content         = $"This login is already imported as \"{alreadyManaged.Name}\".",
+                CloseButtonText = "OK",
+                XamlRoot        = this.Content.XamlRoot,
+            };
+            await alreadyDialog.ShowAsync();
+            return;
+        }
+
         // Step 1: detect
         ImportCandidate? candidate;
         try

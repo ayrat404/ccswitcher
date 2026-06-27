@@ -124,9 +124,12 @@ public static class Importer
 
         var settings = SettingsEnv.Load(settingsPath);
 
+        JsonObject? envObj = null;
+        if (settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject eo)
+            envObj = eo;
+
         // Check env for a non-managed token key.
-        if (settings.TryGetPropertyValue("env", out var envNode) &&
-            envNode is JsonObject envObj)
+        if (envObj is not null)
         {
             // Prefer AUTH_TOKEN over API_KEY.
             if (envObj.TryGetPropertyValue("ANTHROPIC_AUTH_TOKEN", out var authTokenNode))
@@ -162,7 +165,17 @@ public static class Importer
             }
         }
 
-        // No non-managed token key — fall back to OAuth credential store.
+        // If a *managed* token key is present and non-empty in env, a ccswitcher
+        // token account is the current live login — Claude Code prefers env
+        // tokens over OAuth credentials, so any OAuth credential blob still on
+        // disk is leftover from a previously-active OAuth account and is NOT the
+        // current login. Surfacing it would match a different account and
+        // misreport that account as a duplicate. See FindCurrentManagedAccount
+        // for the caller-facing "already imported as X" message for this case.
+        if (envObj is not null && ManagedTokenLive(envObj, managedSet))
+            return null;
+
+        // No non-managed (and no live managed) token key — fall back to OAuth.
         var blob = credentialStore.Read();
         if (blob is null)
             return null;
@@ -329,6 +342,77 @@ public static class Importer
     }
 
     // -----------------------------------------------------------------------
+    // FindCurrentManagedAccount
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// If the current Claude Code login is already a ccswitcher-managed account,
+    /// return that account; otherwise <see langword="null"/>.
+    /// <para>
+    /// This lets the import flow short-circuit with a precise
+    /// "already imported as X" message instead of re-detecting — and, crucially,
+    /// avoids surfacing a <em>stale</em> OAuth credential blob left on disk by a
+    /// previously-active OAuth account when a token account is now active.
+    /// </para>
+    /// <para>
+    /// Only the <em>active</em> token account is considered: when its auth key is
+    /// managed, present and non-empty in settings.json, AND still matches the
+    /// secret stored in the keyring, the live login is that account. OAuth
+    /// accounts are already handled correctly by <see cref="Detect"/> +
+    /// <see cref="FindDuplicate"/> (their live blob matches by identity) and are
+    /// intentionally not re-checked here.
+    /// </para>
+    /// </summary>
+    /// <param name="accounts">All currently configured accounts.</param>
+    /// <param name="activeAccountId">The currently active account id, or <see langword="null"/>.</param>
+    /// <param name="managedKeys">Keys ccswitcher is managing (config.managed_keys).</param>
+    /// <param name="settingsPath">Absolute path to Claude Code's settings.json.</param>
+    /// <param name="secretStore">Keyring reader, to confirm the live token still matches.</param>
+    public static Account? FindCurrentManagedAccount(
+        IReadOnlyList<Account> accounts,
+        string? activeAccountId,
+        IReadOnlyCollection<string> managedKeys,
+        string settingsPath,
+        ISecretStore secretStore)
+    {
+        if (string.IsNullOrEmpty(activeAccountId))
+            return null;
+
+        var active = accounts.FirstOrDefault(a => a.Id == activeAccountId);
+        if (active is null
+            || active.AccountType != AccountType.Token
+            || active.AuthKind is null)
+            return null;
+
+        var key = active.AuthKind == AuthKind.AuthToken
+            ? "ANTHROPIC_AUTH_TOKEN"
+            : "ANTHROPIC_API_KEY";
+        if (!managedKeys.Contains(key))
+            return null;
+
+        // The managed token key must be present and non-empty in the live env…
+        string? live;
+        try
+        {
+            var settings = SettingsEnv.Load(settingsPath);
+            live = settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject envObj
+                ? TryGetString(envObj, key)
+                : null;
+        }
+        catch (SettingsEnvException)
+        {
+            return null;
+        }
+        if (string.IsNullOrEmpty(live))
+            return null;
+
+        // …and still match the stored secret, so a manually-swapped token is not
+        // misreported as the active account.
+        var stored = secretStore.Get(active.Id);
+        return string.Equals(live, stored, StringComparison.Ordinal) ? active : null;
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers (internal so tests can exercise them)
     // -----------------------------------------------------------------------
 
@@ -402,4 +486,16 @@ public static class Importer
             return string.IsNullOrEmpty(s) ? null : s;
         return null;
     }
+
+    /// <summary>
+    /// True when a managed token key (<c>ANTHROPIC_AUTH_TOKEN</c> /
+    /// <c>ANTHROPIC_API_KEY</c>) is present and non-empty in settings.json's env.
+    /// In that state a ccswitcher token account is the live login, so the OAuth
+    /// credential store is stale and must not be offered as an import candidate.
+    /// </summary>
+    private static bool ManagedTokenLive(JsonObject envObj, HashSet<string> managedSet) =>
+        (managedSet.Contains("ANTHROPIC_AUTH_TOKEN")
+            && !string.IsNullOrEmpty(TryGetString(envObj, "ANTHROPIC_AUTH_TOKEN")))
+        || (managedSet.Contains("ANTHROPIC_API_KEY")
+            && !string.IsNullOrEmpty(TryGetString(envObj, "ANTHROPIC_API_KEY")));
 }
