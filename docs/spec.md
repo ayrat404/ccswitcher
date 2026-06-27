@@ -21,8 +21,10 @@ identity:
 - **`~/.claude/settings.json`** — the `env` object is edited (managed keys only).
 - **OAuth credential store** — for native Anthropic OAuth accounts, a saved
   credential snapshot is restored.
-- **`~/.claude.json` `oauthAccount`** — best-effort swap of the active OAuth
-  account's identity block.
+- **User config `oauthAccount`** — best-effort swap of the active OAuth
+  account's identity block. The user config is the first existing of
+  `~/.claude/.claude.json` then `~/.claude.json` (see
+  [§9 Platform matrix](#9-platform-matrix) for the exact candidate order).
 
 Already-running `claude` sessions are unaffected; only new launches pick up the
 change.
@@ -215,10 +217,18 @@ aborted run.
 1. **Validate** the target id exists. Unknown id → typed error, **no store
    touched**.
 2. **Capture-on-switch-out** ([INV-2](#inv-2--capture-on-switch-out-for-oauth)):
-   if the *currently active* account is a **different, still-existing OAuth**
-   account, re-snapshot its live credential blob into the keychain (`id`), and
-   best-effort re-snapshot its live `oauthAccount` block into `{id}#oauthAccount`.
-   These writes are never rolled back.
+   if the *currently active* account is a **still-existing OAuth** account,
+   re-snapshot its live credential blob into the keychain (`id`), and best-effort
+   re-snapshot its live `oauthAccount` block into `{id}#oauthAccount`. These
+   writes are never rolled back.
+
+   This capture is **unconditional** with respect to the target — it runs even
+   when the target *is* the currently-active account. That is deliberate: the
+   live blob is read here, *before* the step-9 restore overwrites it, so
+   re-switching to the already-active account refreshes the stored snapshot with
+   the latest in-place-refreshed token instead of clobbering it with a stale one.
+   This is what makes a same-account re-switch idempotent. (Do **not** gate this
+   on `active_id != target_id`.)
 3. **Load** `settings.json`. Invalid JSON → abort **before any mutation**.
 4. **Capture tracked settings of the outgoing account:** snapshot the live
    values of `tracked_settings_keys` (e.g. `model`) from `settings.json` into the
@@ -273,8 +283,17 @@ for "already ours" checks (never the constant managed set):
    nothing importable (Claude Code prefers env tokens over OAuth, so any
    credential blob on disk is leftover, not the live login).
 3. **OAuth fallback:** if the credential store has a non-empty blob → OAuth
-   candidate. Identity is taken from `~/.claude.json`'s `oauthAccount`
+   candidate. Identity is taken from the user config's `oauthAccount`
    (accountUuid / emailAddress) when available, else extracted from the blob.
+
+**Already-managed active account** (`FindCurrentManagedAccount`): a precise
+short-circuit the UI calls so it can report *"current login is already imported
+as X"* instead of re-detecting. It considers **only the active token account**:
+returns that account iff its auth key (`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`,
+per its `auth_kind`) is in `managed_keys`, is present & non-empty in the live
+`settings.json` env, **and** still equals the secret stored in the keychain (so a
+manually-swapped token isn't misreported). OAuth accounts are intentionally not
+re-checked here — they are handled by `Detect` + `FindDuplicate` via identity.
 
 **Duplicate detection** (`FindDuplicate`):
 - **Token:** duplicate iff same `base_url` **and** same `auth_kind` **and** same
@@ -287,7 +306,16 @@ for "already ours" checks (never the constant managed set):
 without → `"Token Account"`; OAuth with an email identity → that email; OAuth
 otherwise → `"Anthropic"`.
 
-`oauthAccount` handling: only the single `oauthAccount` key of `~/.claude.json`
+**Import result** (`Import`): creates the account, stores its secret in the
+keychain under the new `id`, and returns one of two outcomes:
+- **Created** — no duplicate detected.
+- **CreatedWithWarning** — a duplicate *was* detected (per `FindDuplicate`); the
+  account is **still created**, but the result carries a human-readable warning
+  (e.g. *"An account with the same login (X) already exists."*) for the UI to
+  surface. Duplicate-blocking is primarily enforced up-front by the UI; this
+  in-core check is a safety net (and the single source of truth for the rule).
+
+`oauthAccount` handling: only the single `oauthAccount` key of the user config
 is ever read/swapped; **all other keys (userID, projects, tips, settings, …) are
 the user's data and must never be lost.**
 
