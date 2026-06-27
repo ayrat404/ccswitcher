@@ -353,11 +353,14 @@ public sealed partial class SettingsWindow : Window
             PlaceholderText = isEdit ? "(unchanged)" : "sk-ant-...",
         };
 
+        var envEditor = new EnvVarEditor(editingAccount?.ExtraEnvNullable);
+
         var panel = new StackPanel { Spacing = 10 };
         panel.Children.Add(nameBox);
         panel.Children.Add(baseUrlBox);
         panel.Children.Add(authKindCombo);
         panel.Children.Add(tokenBox);
+        panel.Children.Add(envEditor.Root);
 
         var dialog = new ContentDialog
         {
@@ -378,6 +381,8 @@ public sealed partial class SettingsWindow : Window
         var authKind = authKindCombo.SelectedItem is ComboBoxItem { Tag: AuthKind ak }
             ? ak
             : AuthKind.AuthToken;
+
+        var extraEnv = envEditor.Collect();
 
         if (string.IsNullOrEmpty(name))
         {
@@ -404,6 +409,7 @@ public sealed partial class SettingsWindow : Window
                     string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
                     authKind,
                     string.IsNullOrEmpty(secret) ? null : secret,
+                    extraEnv,
                     _app.GetSecretStore(),
                     ClaudePaths.AppConfigDir);
             }
@@ -415,6 +421,7 @@ public sealed partial class SettingsWindow : Window
                     string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
                     authKind,
                     secret,
+                    extraEnv,
                     _app.GetSecretStore(),
                     ClaudePaths.AppConfigDir);
             }
@@ -458,9 +465,12 @@ public sealed partial class SettingsWindow : Window
             Text            = account.BaseUrl ?? string.Empty,
         };
 
+        var envEditor = new EnvVarEditor(account.ExtraEnvNullable);
+
         var panel = new StackPanel { Spacing = 10 };
         panel.Children.Add(nameBox);
         panel.Children.Add(baseUrlBox);
+        panel.Children.Add(envEditor.Root);
 
         var dialog = new ContentDialog
         {
@@ -489,6 +499,8 @@ public sealed partial class SettingsWindow : Window
         {
             var config = _app.GetConfig();
 
+            var extraEnv = envEditor.Collect();
+
             // Pass the existing auth_kind (null for OAuth) and no new secret so
             // the credential blob and identity are preserved untouched.
             AccountManager.UpdateAccount(
@@ -497,7 +509,8 @@ public sealed partial class SettingsWindow : Window
                 name,
                 string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
                 account.AuthKind,
-                newSecret: null,
+                null,        // newSecret: keep the existing keyring secret
+                extraEnv,
                 _app.GetSecretStore(),
                 ClaudePaths.AppConfigDir);
 
@@ -842,6 +855,127 @@ public sealed partial class SettingsWindow : Window
         finally
         {
             App.StateMutex.Release();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-account environment-variable editor (used inside the add/edit dialogs)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A repeatable key/value row editor for an account's <c>extra_env</c>.
+    /// Built imperatively, like the rest of the dialogs, and returns the
+    /// collected dictionary via <see cref="Collect"/>. Empty rows and rows
+    /// with a blank key are dropped; an all-empty editor collects to null so
+    /// the field is omitted from config.json.
+    /// </summary>
+    private sealed class EnvVarEditor
+    {
+        private readonly StackPanel _rows = new() { Spacing = 6 };
+
+        /// <summary>The control to append to a dialog's content panel.</summary>
+        public FrameworkElement Root { get; }
+
+        public EnvVarEditor(Dictionary<string, string>? initial)
+        {
+            var addBtn = new Button
+            {
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children =
+                    {
+                        new FontIcon { Glyph = "" },  // Add
+                        new TextBlock { Text = "Add variable", VerticalAlignment = VerticalAlignment.Center },
+                    },
+                },
+            };
+            addBtn.Click += (_, _) => AddRow("", "");
+
+            // Bound so a long list scrolls inside the dialog instead of overflowing.
+            var rowsScroll = new ScrollViewer
+            {
+                Content                       = _rows,
+                MaxHeight                     = 220,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            };
+
+            Root = new StackPanel
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text  = "Environment variables (optional)",
+                        Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"],
+                    },
+                    new TextBlock
+                    {
+                        Text         = "Applied to Claude Code when this account is active.",
+                        Opacity      = 0.7,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    rowsScroll,
+                    addBtn,
+                },
+            };
+
+            if (initial != null)
+                foreach (var (key, value) in initial)
+                    AddRow(key, value);
+        }
+
+        private void AddRow(string key, string value)
+        {
+            var keyBox = new TextBox { PlaceholderText = "Variable", Text = key };
+            var valBox = new TextBox { PlaceholderText = "Value",     Text = value };
+
+            var removeBtn = new Button
+            {
+                Content = new FontIcon { Glyph = "" },  // Clear (✕)
+                Padding = new Thickness(8, 4, 8, 4),
+            };
+
+            var row = new Grid { ColumnSpacing = 6 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1,   GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            Grid.SetColumn(keyBox, 0);
+            Grid.SetColumn(valBox, 1);
+            Grid.SetColumn(removeBtn, 2);
+            row.Children.Add(keyBox);
+            row.Children.Add(valBox);
+            row.Children.Add(removeBtn);
+
+            removeBtn.Click += (_, _) => _rows.Children.Remove(row);
+
+            _rows.Children.Add(row);
+        }
+
+        /// <summary>
+        /// Collects rows with a non-empty key (trimming key and value) into a
+        /// dictionary. Returns null when empty.
+        /// </summary>
+        public Dictionary<string, string>? Collect()
+        {
+            var dict = new Dictionary<string, string>();
+
+            foreach (var row in _rows.Children.OfType<Grid>())
+            {
+                var boxes = row.Children.OfType<TextBox>().ToList();
+                if (boxes.Count == 0) continue;
+
+                var key = boxes[0].Text.Trim();
+                if (string.IsNullOrEmpty(key)) continue;
+
+                dict[key] = boxes.Count > 1 ? boxes[1].Text.Trim() : string.Empty;
+            }
+
+            return dict.Count > 0 ? dict : null;
         }
     }
 }

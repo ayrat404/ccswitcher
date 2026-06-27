@@ -37,6 +37,9 @@ public static class AccountManager
     /// <param name="baseUrl">Optional ANTHROPIC_BASE_URL override.</param>
     /// <param name="authKind">Whether the secret is an auth token or an API key.</param>
     /// <param name="secret">The raw token/key to store in the keyring.</param>
+    /// <param name="extraEnv">Optional extra environment variables applied when
+    /// this account is active. Stored as null when empty so it is omitted from
+    /// config.json.</param>
     /// <param name="secretStore">OS keyring (or in-memory mock for tests).</param>
     /// <param name="configDir">Directory where config.json is saved.</param>
     /// <returns>The newly created <see cref="Account"/>.</returns>
@@ -46,6 +49,7 @@ public static class AccountManager
         string? baseUrl,
         AuthKind authKind,
         string secret,
+        Dictionary<string, string>? extraEnv,
         ISecretStore secretStore,
         string configDir)
     {
@@ -57,11 +61,12 @@ public static class AccountManager
 
         var account = new Account
         {
-            Id          = id,
-            Name        = name,
-            AccountType = AccountType.Token,
-            BaseUrl     = string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
-            AuthKind    = authKind,
+            Id               = id,
+            Name             = name,
+            AccountType      = AccountType.Token,
+            BaseUrl          = string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
+            AuthKind         = authKind,
+            ExtraEnvNullable = NormalizeExtraEnv(extraEnv),
         };
 
         config.Accounts.Add(account);
@@ -74,9 +79,16 @@ public static class AccountManager
     /// Update an existing account's metadata.
     /// <para>
     /// Finds the account by <paramref name="accountId"/> and updates name,
-    /// base URL, and auth kind.  When <paramref name="newSecret"/> is non-null
-    /// and non-empty the keyring entry is also updated; otherwise the existing
-    /// keyring secret is left untouched.
+    /// base URL, auth kind, and extra environment variables. The account-owned
+    /// fields that are not edited here (identity and the per-account remembered
+    /// <c>SavedSettings</c>) are carried over unchanged. When
+    /// <paramref name="newSecret"/> is non-null and non-empty the keyring entry
+    /// is also updated; otherwise the existing keyring secret is left untouched.
+    /// </para>
+    /// <para>
+    /// <paramref name="extraEnv"/> is the authoritative new value: it replaces
+    /// the previous extra_env entirely (pass null or an empty collection to
+    /// clear it).
     /// </para>
     /// </summary>
     /// <exception cref="AccountNotFoundException">
@@ -89,6 +101,7 @@ public static class AccountManager
         string? baseUrl,
         AuthKind? authKind,
         string? newSecret,
+        Dictionary<string, string>? extraEnv,
         ISecretStore secretStore,
         string configDir)
     {
@@ -98,16 +111,19 @@ public static class AccountManager
 
         var existing = config.Accounts[index];
 
-        // Rebuild the account record with updated fields.
+        // Rebuild the account record with the edited fields, carrying over the
+        // account-owned fields that are not part of this edit (identity and the
+        // per-account remembered settings) and applying the new extra_env.
         var updated = new Account
         {
-            Id          = existing.Id,
-            Name        = name,
-            AccountType = existing.AccountType,
-            BaseUrl     = string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
-            AuthKind    = authKind ?? existing.AuthKind,
-            Identity    = existing.Identity,
-            ExtraEnvNullable = existing.ExtraEnvNullable,
+            Id               = existing.Id,
+            Name             = name,
+            AccountType      = existing.AccountType,
+            BaseUrl          = string.IsNullOrEmpty(baseUrl) ? null : baseUrl,
+            AuthKind         = authKind ?? existing.AuthKind,
+            Identity         = existing.Identity,
+            ExtraEnvNullable = NormalizeExtraEnv(extraEnv),
+            SavedSettings    = existing.SavedSettings,
         };
 
         config.Accounts[index] = updated;
@@ -157,4 +173,12 @@ public static class AccountManager
 
         ConfigStore.Save(configDir, config);
     }
+
+    /// <summary>
+    /// Returns <paramref name="env"/> as-is when it is non-empty, otherwise
+    /// null. This keeps an empty <c>extra_env</c> out of config.json (the
+    /// property uses <c>JsonIgnoreCondition.WhenWritingNull</c>).
+    /// </summary>
+    private static Dictionary<string, string>? NormalizeExtraEnv(Dictionary<string, string>? env)
+        => env is { Count: > 0 } ? env : null;
 }
