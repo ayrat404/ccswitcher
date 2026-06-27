@@ -9,6 +9,7 @@
 // - AuthKind serializes as "auth_token" / "api_key".
 
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace CCSwitcher.Core;
@@ -128,6 +129,15 @@ public sealed class Account
     /// <summary>Non-null view of ExtraEnv; empty dict when not set.</summary>
     [JsonIgnore]
     public Dictionary<string, string> ExtraEnv => ExtraEnvNullable ?? new();
+
+    /// <summary>Per-account snapshot of tracked top-level settings.json keys
+    /// (e.g. <c>{"model":"claude-opus-4-8"}</c>), captured when switching away
+    /// and restored when switching back. Keyed by settings key. Mutable so the
+    /// switch engine can update it in place; omitted from JSON when null.
+    /// See <see cref="AppConfig.TrackedSettingsKeys"/>.</summary>
+    [JsonPropertyName("saved_settings")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonObject? SavedSettings { get; set; }
 }
 
 /// <summary>Global single HTTP proxy toggle.</summary>
@@ -172,6 +182,14 @@ public sealed class AppConfig
     /// Used to robustly strip prior managed/extra keys on the next switch.</summary>
     [JsonPropertyName("managed_keys")]
     public List<string> ManagedKeys { get; set; } = new();
+
+    /// <summary>Top-level <c>settings.json</c> keys (siblings of <c>env</c>) that
+    /// ccswitcher captures from the outgoing account and restores for the
+    /// incoming account on every switch. Each account's captured values live in
+    /// <see cref="Account.SavedSettings"/>. Defaults to <c>["model"]</c>; an
+    /// empty list disables the feature (those keys are never touched).</summary>
+    [JsonPropertyName("tracked_settings_keys")]
+    public List<string> TrackedSettingsKeys { get; set; } = new() { "model" };
 
     /// <summary>All known accounts.</summary>
     [JsonPropertyName("accounts")]

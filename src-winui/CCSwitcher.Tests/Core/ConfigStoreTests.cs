@@ -135,6 +135,10 @@ public sealed class ConfigStoreTests : IDisposable
                     Name = "Anthropic OAuth",
                     AccountType = AccountType.AnthropicOauth,
                     Identity = "user@example.com",
+                    SavedSettings = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["model"] = "claude-opus-4-8",
+                    },
                 },
             },
         };
@@ -165,6 +169,25 @@ public sealed class ConfigStoreTests : IDisposable
         Assert.Equal("user@example.com", oauthAcc.Identity);
         Assert.Null(oauthAcc.BaseUrl);
         Assert.Null(oauthAcc.AuthKind);
+        Assert.Equal("claude-opus-4-8", oauthAcc.SavedSettings?["model"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void Default_TracksModelSetting()
+    {
+        // Model tracking is on by default.
+        Assert.Equal(new List<string> { "model" }, AppConfig.Default.TrackedSettingsKeys);
+    }
+
+    [Fact]
+    public void SaveAndLoad_PreservesTrackedSettingsKeys()
+    {
+        var original = new AppConfig { TrackedSettingsKeys = new List<string> { "model", "editorMode" } };
+
+        ConfigStore.Save(_dir, original);
+        var loaded = ConfigStore.Load(_dir);
+
+        Assert.Equal(new List<string> { "model", "editorMode" }, loaded.TrackedSettingsKeys);
     }
 
     [Fact]

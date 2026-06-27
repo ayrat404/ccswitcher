@@ -256,4 +256,74 @@ public sealed class SettingsEnvTests : IDisposable
         Assert.Equal("keep", env["USER_KEY"]?.GetValue<string>());
         Assert.Empty(newKeys);
     }
+
+    // -----------------------------------------------------------------------
+    // CaptureSettings / RestoreSettings (tracked top-level keys)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void CaptureSettings_CopiesPresentTrackedKeys()
+    {
+        var settings = JsonNode.Parse("""{"env":{},"model":"opus","editorMode":"vim"}""")!.AsObject();
+        var into = new JsonObject();
+
+        SettingsEnv.CaptureSettings(into, settings, new[] { "model" });
+
+        Assert.Equal("opus", into["model"]?.GetValue<string>());
+        // Untracked key not captured.
+        Assert.False(into.ContainsKey("editorMode"));
+    }
+
+    [Fact]
+    public void CaptureSettings_RecordsNull_WhenKeyAbsent()
+    {
+        // Claude Code omits "model" entirely when the model is "default". Capture
+        // must record that as JSON null (the "default" state), overwriting any
+        // previously-saved value.
+        var settings = JsonNode.Parse("""{"env":{}}""")!.AsObject(); // no "model"
+        var into = new JsonObject { ["model"] = "previously-saved" };
+
+        SettingsEnv.CaptureSettings(into, settings, new[] { "model" });
+
+        Assert.True(into.ContainsKey("model"));
+        Assert.Null(into["model"]);
+    }
+
+    [Fact]
+    public void RestoreSettings_WritesSavedValues()
+    {
+        var settings = JsonNode.Parse("""{"env":{},"model":"opus"}""")!.AsObject();
+        var saved = new JsonObject { ["model"] = "glm" };
+
+        SettingsEnv.RestoreSettings(settings, saved, new[] { "model" });
+
+        Assert.Equal("glm", settings["model"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void RestoreSettings_RemovesKey_WhenSavedIsNull()
+    {
+        // Captured "default" → the key must be dropped from settings (Claude Code
+        // represents "default" by the key's absence).
+        var settings = JsonNode.Parse("""{"env":{},"model":"opus"}""")!.AsObject();
+        var saved = new JsonObject { ["model"] = null };
+
+        SettingsEnv.RestoreSettings(settings, saved, new[] { "model" });
+
+        Assert.False(settings.ContainsKey("model"));
+    }
+
+    [Fact]
+    public void RestoreSettings_LeavesKeyUntouched_WhenNeverCaptured()
+    {
+        var settings = JsonNode.Parse("""{"env":{},"model":"opus"}""")!.AsObject();
+
+        // Null snapshot → no-op.
+        SettingsEnv.RestoreSettings(settings, null, new[] { "model" });
+        Assert.Equal("opus", settings["model"]?.GetValue<string>());
+
+        // Snapshot without the tracked key (never captured) → no-op.
+        SettingsEnv.RestoreSettings(settings, new JsonObject(), new[] { "model" });
+        Assert.Equal("opus", settings["model"]?.GetValue<string>());
+    }
 }

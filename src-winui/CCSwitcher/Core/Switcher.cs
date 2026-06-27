@@ -177,6 +177,22 @@ public static class Switcher
             throw new SwitchException($"failed to load settings.json: {ex.Message}", ex);
         }
 
+        // --- Step 3b: capture tracked settings of the OUTGOING account --------
+        // Before overwriting settings.json, snapshot the live values of the
+        // tracked top-level keys (e.g. "model") into the currently-active
+        // account so they can be restored when the user switches back. The
+        // snapshot is persisted by the step-8 config save below.
+        if (activeId != null && config.TrackedSettingsKeys.Count > 0)
+        {
+            var outgoing = config.Accounts.Find(a => a.Id == activeId);
+            if (outgoing != null)
+            {
+                outgoing.SavedSettings ??= new JsonObject();
+                SettingsEnv.CaptureSettings(
+                    outgoing.SavedSettings, settings, config.TrackedSettingsKeys);
+            }
+        }
+
         // --- Step 4: build target env (missing secret aborts before any write) --
         // For token accounts fetch the secret from the keyring; OAuth accounts
         // do not need a secret to build env.
@@ -190,6 +206,16 @@ public static class Switcher
         // --- Step 5: merge env -----------------------------------------------
         var (mergedSettings, newManagedKeys) =
             SettingsEnv.MergeEnv(settings, config.ManagedKeys, newEnv);
+
+        // --- Step 5b: restore the INCOMING account's tracked settings --------
+        // Write back the target account's saved top-level keys (e.g. "model").
+        // Keys the target has never had saved are left untouched, so the first
+        // switch to an account keeps whatever model is currently set.
+        if (config.TrackedSettingsKeys.Count > 0)
+        {
+            SettingsEnv.RestoreSettings(
+                mergedSettings, target.SavedSettings, config.TrackedSettingsKeys);
+        }
 
         // --- Step 6: backup + atomic write settings.json ---------------------
         var settingsBackupsDir = Path.Combine(

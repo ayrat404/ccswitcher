@@ -137,6 +137,68 @@ public static class SettingsEnv
         var newManagedKeys = new List<string>(newEnv.Keys);
         return (settings, newManagedKeys);
     }
+
+    /// <summary>
+    /// Capture the current values of the tracked top-level <paramref name="keys"/>
+    /// from <paramref name="settings"/> into <paramref name="into"/> (a per-account
+    /// snapshot). Each tracked key is always recorded so the snapshot reflects the
+    /// account's current state:
+    /// <list type="bullet">
+    ///   <item>present &amp; non-null in <paramref name="settings"/> → stored as a
+    ///   deep clone of the value;</item>
+    ///   <item>absent (or JSON null) in <paramref name="settings"/> → stored as
+    ///   JSON null, which represents the "default" state (Claude Code omits the
+    ///   key entirely when, e.g., the model is "default").</item>
+    /// </list>
+    /// Entries in <paramref name="into"/> for keys outside
+    /// <paramref name="keys"/> are left untouched (merge across the key set).
+    /// </summary>
+    public static void CaptureSettings(
+        JsonObject into,
+        JsonObject settings,
+        IEnumerable<string> keys)
+    {
+        foreach (var key in keys)
+        {
+            into[key] = settings.TryGetPropertyValue(key, out var node) && node is not null
+                ? node.DeepClone()
+                : null; // absent/null in settings == "default"
+        }
+    }
+
+    /// <summary>
+    /// Restore the tracked top-level <paramref name="keys"/> into
+    /// <paramref name="settings"/> from a per-account snapshot
+    /// <paramref name="saved"/>. Tri-state per key:
+    /// <list type="bullet">
+    ///   <item><paramref name="saved"/> is null, or the key is <b>absent</b> from
+    ///   it (never captured) → the key in <paramref name="settings"/> is left
+    ///   exactly as-is (first switch keeps the current value);</item>
+    ///   <item>the key is present with a <b>null</b> value (captured "default") →
+    ///   the key is <b>removed</b> from <paramref name="settings"/>;</item>
+    ///   <item>the key is present with a value → it is written (deep-cloned).</item>
+    /// </list>
+    /// </summary>
+    public static void RestoreSettings(
+        JsonObject settings,
+        JsonObject? saved,
+        IEnumerable<string> keys)
+    {
+        if (saved is null)
+            return;
+
+        foreach (var key in keys)
+        {
+            if (!saved.ContainsKey(key))
+                continue; // never captured → leave as-is
+
+            var node = saved[key];
+            if (node is null)
+                settings.Remove(key); // captured "default" → drop the key
+            else
+                settings[key] = node.DeepClone();
+        }
+    }
 }
 
 /// <summary>

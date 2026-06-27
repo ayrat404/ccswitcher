@@ -89,6 +89,17 @@ public sealed class SwitcherTests : IDisposable
         return null;
     }
 
+    /// <summary>Read the top-level "model" key from settings.json (or null).</summary>
+    private string? SettingsModel()
+    {
+        if (!File.Exists(_settingsPath))
+            return null;
+        var settings = SettingsEnv.Load(_settingsPath);
+        return settings.TryGetPropertyValue("model", out var n)
+            ? n?.GetValue<string>()
+            : null;
+    }
+
     private static Account TokenAccount(string id, string? baseUrl = null) => new()
     {
         Id          = id,
@@ -233,6 +244,99 @@ public sealed class SwitcherTests : IDisposable
         // Switch back to A: restore must use the refreshed blob, not the import-time one.
         Switcher.ApplyAccount(cfg, "a", Deps());
         Assert.Equal(refreshedBlob, _creds.Read());
+    }
+
+    // -----------------------------------------------------------------------
+    // 5c. tracked-model capture-on-switch-out + restore-on-switch-in
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Switch_CapturesOutgoingModel_AndRestoresIncomingModel()
+    {
+        // Live settings has model "opus"; account A (OAuth) is active; account B
+        // (token) already has a saved model "glm" from a previous session.
+        File.WriteAllText(_settingsPath, """{"env":{},"model":"opus"}""");
+        _secrets.Set("a", """{"claudeAiOauth":{"accessToken":"x"}}""");
+        _secrets.Set("b", "sk-b");
+
+        var a = OauthAccount("a");
+        var b = TokenAccount("b");
+        b.SavedSettings = new JsonObject { ["model"] = "glm" };
+        var cfg = ConfigWith(a, b);
+        cfg.ActiveAccountId = "a";
+
+        Switcher.ApplyAccount(cfg, "b", Deps());
+
+        // Outgoing A captured the live "opus".
+        Assert.Equal("opus", a.SavedSettings?["model"]?.GetValue<string>());
+        // Incoming B's saved "glm" was written into settings.json.
+        Assert.Equal("glm", SettingsModel());
+    }
+
+    [Fact]
+    public void Switch_ToAccountWithoutSavedModel_KeepsCurrentModel()
+    {
+        // No active account (first switch). Target B has no saved model.
+        File.WriteAllText(_settingsPath, """{"env":{},"model":"opus"}""");
+        _secrets.Set("b", "sk-b");
+
+        var cfg = ConfigWith(TokenAccount("b"));
+        Switcher.ApplyAccount(cfg, "b", Deps());
+
+        // Model left exactly as-is (never overwritten with null).
+        Assert.Equal("opus", SettingsModel());
+    }
+
+    [Fact]
+    public void Switch_CapturesDefaultAsNull_AndRestoreRemovesKey()
+    {
+        // Live settings has NO model key (Claude Code "default"). Account A is
+        // active; account B has a saved concrete model "glm".
+        File.WriteAllText(_settingsPath, """{"env":{}}""");
+        _secrets.Set("a", """{"claudeAiOauth":{"accessToken":"x"}}""");
+        _secrets.Set("b", "sk-b");
+
+        var a = OauthAccount("a");
+        var b = TokenAccount("b");
+        b.SavedSettings = new JsonObject { ["model"] = "glm" };
+        var cfg = ConfigWith(a, b);
+        cfg.ActiveAccountId = "a";
+
+        // Switch A→B: A's default (absent model) is captured as null; B's "glm"
+        // is written into settings.json.
+        Switcher.ApplyAccount(cfg, "b", Deps());
+        Assert.True(a.SavedSettings?.ContainsKey("model"));
+        Assert.Null(a.SavedSettings?["model"]);
+        Assert.Equal("glm", SettingsModel());
+
+        // Now simulate A's restored state by switching back to A: its captured
+        // null ("default") must REMOVE the model key from settings.json.
+        // First capture B's current model (glm) on the way out.
+        Switcher.ApplyAccount(cfg, "a", Deps());
+        Assert.Equal("glm", b.SavedSettings?["model"]?.GetValue<string>());
+        Assert.Null(SettingsModel()); // key removed → default
+        var settings = SettingsEnv.Load(_settingsPath);
+        Assert.False(settings.ContainsKey("model"));
+    }
+
+    [Fact]
+    public void Switch_TrackingDisabled_DoesNotTouchModel()
+    {
+        File.WriteAllText(_settingsPath, """{"env":{},"model":"opus"}""");
+        _secrets.Set("b", "sk-b");
+
+        var a = OauthAccount("a");
+        var b = TokenAccount("b");
+        b.SavedSettings = new JsonObject { ["model"] = "glm" };
+        var cfg = ConfigWith(a, b);
+        cfg.ActiveAccountId = "a";
+        cfg.TrackedSettingsKeys = new List<string>(); // feature disabled
+
+        Switcher.ApplyAccount(cfg, "b", Deps());
+
+        // B's "glm" is NOT restored and A captures nothing.
+        Assert.Equal("opus", SettingsModel());
+        Assert.Null(a.SavedSettings);
     }
 
     // -----------------------------------------------------------------------

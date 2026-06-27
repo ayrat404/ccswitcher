@@ -39,6 +39,12 @@ public sealed partial class SettingsWindow : Window
     // Guards the proxy toggle's Toggled handler from firing programmatically.
     private bool _suppressProxyToggle;
 
+    // Guards the model-tracking toggle's Toggled handler from firing programmatically.
+    private bool _suppressModelTrackingToggle;
+
+    // The settings.json top-level key tracked by the "remember model" toggle.
+    private const string ModelSettingKey = "model";
+
     // -----------------------------------------------------------------------
     // Construction
     // -----------------------------------------------------------------------
@@ -160,6 +166,11 @@ public sealed partial class SettingsWindow : Window
         _suppressStartupToggle = true;
         StartupToggle.IsOn = StartupManager.IsEnabled();
         _suppressStartupToggle = false;
+
+        // Model-tracking toggle
+        _suppressModelTrackingToggle = true;
+        ModelTrackingToggle.IsOn = config.TrackedSettingsKeys.Contains(ModelSettingKey);
+        _suppressModelTrackingToggle = false;
     }
 
     /// <summary>
@@ -774,5 +785,38 @@ public sealed partial class SettingsWindow : Window
 
         StartupManager.SetEnabled(StartupToggle.IsOn);
         _app.RebuildTray();
+    }
+
+    // -----------------------------------------------------------------------
+    // On switch — remember selected model per account
+    // -----------------------------------------------------------------------
+
+    private async void ModelTrackingToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressModelTrackingToggle) return;
+
+        var enabled = ModelTrackingToggle.IsOn;
+
+        await App.StateMutex.WaitAsync();
+        try
+        {
+            var config = _app.GetConfig();
+
+            var has = config.TrackedSettingsKeys.Contains(ModelSettingKey);
+            if (enabled && !has)
+                config.TrackedSettingsKeys.Add(ModelSettingKey);
+            else if (!enabled && has)
+                config.TrackedSettingsKeys.Remove(ModelSettingKey);
+
+            ConfigStore.Save(ClaudePaths.AppConfigDir, config);
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+        }
+        finally
+        {
+            App.StateMutex.Release();
+        }
     }
 }

@@ -153,6 +153,20 @@
                                   Toggled="StartupToggle_Toggled"/>
                 </tkit:SettingsCard>
 
+                <!-- ====================== On switch ========================== -->
+                <TextBlock Text="On switch"
+                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                           Margin="0,28,0,8"/>
+
+                <tkit:SettingsCard Header="Remember selected model per account"
+                                   Description="When switching accounts, save the current model and restore each account's own model.">
+                    <tkit:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE8B7;"/>
+                    </tkit:SettingsCard.HeaderIcon>
+                    <ToggleSwitch x:Name="ModelTrackingToggle"
+                                  Toggled="ModelTrackingToggle_Toggled"/>
+                </tkit:SettingsCard>
+
             </StackPanel>
         </ScrollViewer>
     </Grid>
