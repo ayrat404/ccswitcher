@@ -666,31 +666,31 @@ public sealed partial class SettingsWindow : Window
             }
 
             config.Accounts.Add(newAccount);
-            ConfigStore.Save(ClaudePaths.AppConfigDir, config);
 
-            // Mark the freshly-imported current login active — it is already the
-            // live login in Claude Code. Skip capture-on-switch-out: the live
-            // credentials are this new account, so capturing them into the old
-            // active account's slot would corrupt it.
+            // Mark the freshly-imported current login active. Import must NOT
+            // touch Claude Code's files (settings.json / .credentials.json /
+            // ~/.claude.json) — the login is already live; ccswitcher merely
+            // adopts it. So we only update our own config.json: record the
+            // account active and set managed_keys to the keys this account owns
+            // (already present in settings.json) so a later switch strips them.
             try
             {
-                var deps = new SwitchDeps
-                {
-                    SettingsPath    = ClaudePaths.SettingsPath,
-                    ConfigDir       = ClaudePaths.AppConfigDir,
-                    UserConfigPath  = ClaudePaths.FindUserConfig(),
-                    SecretStore     = _app.GetSecretStore(),
-                    CredentialStore = _app.GetCredentialStore(),
-                };
-                Switcher.ApplyAccount(config, newAccount.Id, deps, captureOnSwitchOut: false);
+                string? secret = newAccount.AccountType == AccountType.Token
+                    ? _app.GetSecretStore().Get(newAccount.Id)
+                    : null;
+                config.ManagedKeys =
+                    EnvBuilder.Build(newAccount, secret, config.Proxy).Keys.ToList();
+                config.ActiveAccountId = newAccount.Id;
             }
             catch (Exception ex)
             {
-                // Best-effort: the account is already saved; failing to mark it
-                // active must not fail the import.
+                // Best-effort: a failure here must not fail the import; the
+                // account is still saved below (just not marked active).
                 System.Diagnostics.Debug.WriteLine(
                     $"[CCSwitcher] Mark-active after import failed: {Secrets.Sanitize(ex.Message)}");
             }
+
+            ConfigStore.Save(ClaudePaths.AppConfigDir, config);
 
             _app.RebuildTray();
             Refresh();

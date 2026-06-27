@@ -35,6 +35,20 @@ public sealed class AtomicFileTests : IDisposable
     }
 
     [Fact]
+    public void Write_DoesNotEmitUtf8Bom()
+    {
+        // Claude Code's .credentials.json reader rejects a leading UTF-8 BOM, so
+        // AtomicFile.Write must never emit one.
+        var target = Path.Combine(_dir, "config.json");
+
+        AtomicFile.Write(target, "{}");
+
+        var bytes = File.ReadAllBytes(target);
+        var hasBom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+        Assert.False(hasBom, "AtomicFile.Write must not emit a UTF-8 BOM");
+    }
+
+    [Fact]
     public void Write_LeavesNoTmpFileAfterSuccess()
     {
         var target = Path.Combine(_dir, "config.json");

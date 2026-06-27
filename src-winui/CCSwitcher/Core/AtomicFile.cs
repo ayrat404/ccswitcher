@@ -23,6 +23,15 @@ namespace CCSwitcher.Core;
 public static class AtomicFile
 {
     /// <summary>
+    /// UTF-8 encoding <b>without</b> a BOM. Claude Code's parsers (notably the
+    /// <c>.credentials.json</c> reader) reject a leading UTF-8 BOM, so every
+    /// file ccswitcher writes — settings.json, config.json, .credentials.json —
+    /// must be BOM-free. (<see cref="System.Text.Encoding.UTF8"/> emits a BOM.)
+    /// </summary>
+    private static readonly System.Text.UTF8Encoding Utf8NoBom =
+        new(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>
     /// Atomically write <paramref name="content"/> to <paramref name="path"/>.
     /// <para>
     /// Writes to <c><paramref name="path"/>.tmp</c> (in the same directory as the
@@ -46,7 +55,7 @@ public static class AtomicFile
         var tmpPath = path + ".tmp";
         try
         {
-            File.WriteAllText(tmpPath, content, System.Text.Encoding.UTF8);
+            File.WriteAllText(tmpPath, content, Utf8NoBom);
             File.Move(tmpPath, path, overwrite: true);
         }
         catch
