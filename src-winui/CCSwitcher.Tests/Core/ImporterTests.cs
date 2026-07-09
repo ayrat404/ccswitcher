@@ -348,11 +348,11 @@ public sealed class ImporterTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // CurrentExtraEnv tests
+    // CurrentModelEnv tests
     // -----------------------------------------------------------------------
 
     [Fact]
-    public void CurrentExtraEnv_ReturnsOnlyNonManagedKeys()
+    public void CurrentModelEnv_ReturnsOnlyModelKeys()
     {
         var path = WriteSettings("""
         {
@@ -360,56 +360,83 @@ public sealed class ImporterTests : IDisposable
             "ANTHROPIC_AUTH_TOKEN": "sk-live",
             "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
             "HTTP_PROXY": "http://127.0.0.1:8080",
+            "ANTHROPIC_MODEL": "claude-opus-4-8",
+            "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku-4-5",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
             "CUSTOM_VAR": "value",
-            "ANOTHER": "42"
+            "API_TIMEOUT_MS": "60000"
           }
         }
         """);
 
-        var env = Importer.CurrentExtraEnv(path);
+        var env = Importer.CurrentModelEnv(path);
 
-        Assert.Equal(2, env.Count);
-        Assert.Equal("value", env["CUSTOM_VAR"]);
-        Assert.Equal("42", env["ANOTHER"]);
+        Assert.Equal(3, env.Count);
+        Assert.Equal("claude-opus-4-8", env["ANTHROPIC_MODEL"]);
+        Assert.Equal("claude-haiku-4-5", env["ANTHROPIC_SMALL_FAST_MODEL"]);
+        Assert.Equal("claude-sonnet-5", env["ANTHROPIC_DEFAULT_SONNET_MODEL"]);
+        // Non-model vars are left untouched (shared across logins), not adopted.
+        Assert.DoesNotContain("CUSTOM_VAR", env.Keys);
+        Assert.DoesNotContain("API_TIMEOUT_MS", env.Keys);
         Assert.DoesNotContain("ANTHROPIC_AUTH_TOKEN", env.Keys);
         Assert.DoesNotContain("ANTHROPIC_BASE_URL", env.Keys);
         Assert.DoesNotContain("HTTP_PROXY", env.Keys);
     }
 
     [Fact]
-    public void CurrentExtraEnv_ReturnsEmpty_WhenSettingsMissing()
+    public void CurrentModelEnv_IgnoresAnthropicKeysWithoutModel()
     {
-        var path = Path.Combine(_tmpDir, "does-not-exist.json");
-
-        Assert.Empty(Importer.CurrentExtraEnv(path));
-    }
-
-    [Fact]
-    public void CurrentExtraEnv_ReturnsEmpty_WhenNoEnvObject()
-    {
-        var path = WriteSettings("""{ "permissions": {} }""");
-
-        Assert.Empty(Importer.CurrentExtraEnv(path));
-    }
-
-    [Fact]
-    public void CurrentExtraEnv_SkipsNonStringAndEmptyValues()
-    {
+        // ANTHROPIC_ prefix alone is not enough — must also contain _MODEL.
         var path = WriteSettings("""
         {
           "env": {
-            "GOOD": "yes",
-            "EMPTY": "",
-            "NUMBER": 5,
-            "NULLED": null
+            "ANTHROPIC_LOG": "debug",
+            "ANTHROPIC_MODEL": "claude-opus-4-8"
           }
         }
         """);
 
-        var env = Importer.CurrentExtraEnv(path);
+        var env = Importer.CurrentModelEnv(path);
 
         Assert.Single(env);
-        Assert.Equal("yes", env["GOOD"]);
+        Assert.Equal("claude-opus-4-8", env["ANTHROPIC_MODEL"]);
+        Assert.DoesNotContain("ANTHROPIC_LOG", env.Keys);
+    }
+
+    [Fact]
+    public void CurrentModelEnv_ReturnsEmpty_WhenSettingsMissing()
+    {
+        var path = Path.Combine(_tmpDir, "does-not-exist.json");
+
+        Assert.Empty(Importer.CurrentModelEnv(path));
+    }
+
+    [Fact]
+    public void CurrentModelEnv_ReturnsEmpty_WhenNoEnvObject()
+    {
+        var path = WriteSettings("""{ "permissions": {} }""");
+
+        Assert.Empty(Importer.CurrentModelEnv(path));
+    }
+
+    [Fact]
+    public void CurrentModelEnv_SkipsNonStringAndEmptyValues()
+    {
+        var path = WriteSettings("""
+        {
+          "env": {
+            "ANTHROPIC_MODEL": "claude-opus-4-8",
+            "ANTHROPIC_SMALL_FAST_MODEL": "",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": 5,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": null
+          }
+        }
+        """);
+
+        var env = Importer.CurrentModelEnv(path);
+
+        Assert.Single(env);
+        Assert.Equal("claude-opus-4-8", env["ANTHROPIC_MODEL"]);
     }
 
     [Fact]

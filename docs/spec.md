@@ -313,14 +313,22 @@ without → `"Token Account"`; OAuth with an email identity → that email; OAut
 otherwise → `"Anthropic"`.
 
 **Adopting current env vars:** on import the UI pre-fills the account's
-`extra_env` with the current `settings.json` `env` entries that are **not** in the
-constant managed set (i.e. excluding `ANTHROPIC_BASE_URL`, the token keys, and the
-proxy keys — those are already captured as the secret / `base_url` / global proxy).
-The user may edit them before confirming. `Import` accepts this optional
-`extra_env` and records it on the created account, so the user's own variables are
-adopted rather than lost. (These keys are already live in `settings.json`, so
-after import `managed_keys` — built from the account's full env — matches on-disk
-state and a later switch strips them cleanly.)
+`extra_env` with only the **model-selector** entries from the current
+`settings.json` `env` — keys that start with `ANTHROPIC_` **and** contain
+`_MODEL` (e.g. `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+`ANTHROPIC_DEFAULT_*_MODEL`). Model choice is inherently per-account, so it must
+switch with the account. All **other** env entries are intentionally **not**
+adopted: they are typically shared across logins, and by staying out of any
+account's `extra_env` (and therefore out of `managed_keys`) they remain untouched
+user env that survives every switch (INV-1). The constant managed keys
+(`ANTHROPIC_BASE_URL`, the token keys, the proxy keys) are excluded regardless,
+since they are captured separately as the secret / `base_url` / global proxy.
+The user may edit the pre-filled set before confirming — including adding any
+other variable they want to be account-specific. `Import` accepts this optional
+`extra_env` and records it on the created account. (The adopted model keys are
+already live in `settings.json`, so after import `managed_keys` — built from the
+account's full env — matches on-disk state and a later switch strips them
+cleanly.)
 
 **Import result** (`Import`): creates the account, stores its secret in the
 keychain under the new `id`, and returns one of two outcomes:

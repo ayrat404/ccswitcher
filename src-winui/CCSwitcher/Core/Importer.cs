@@ -411,24 +411,33 @@ public static class Importer
     }
 
     // -----------------------------------------------------------------------
-    // CurrentExtraEnv
+    // CurrentModelEnv
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// The current <c>settings.json</c> <c>env</c> entries that are NOT part of
-    /// the constant <see cref="SettingsEnv.ManagedKeys"/> set — i.e. the user's
-    /// own custom variables. Offered as pre-filled <c>extra_env</c> when importing
-    /// the current login, so they are adopted onto the new account rather than
-    /// lost. The token, base URL and proxy keys are excluded because they are
+    /// The current <c>settings.json</c> <c>env</c> entries that are <b>model
+    /// selectors</b> — keys starting with <c>ANTHROPIC_</c> that contain
+    /// <c>_MODEL</c> (e.g. <c>ANTHROPIC_MODEL</c>, <c>ANTHROPIC_SMALL_FAST_MODEL</c>,
+    /// <c>ANTHROPIC_DEFAULT_*_MODEL</c>). Offered as pre-filled <c>extra_env</c>
+    /// when importing the current login, because model choice is inherently
+    /// per-account and should switch with the account.
+    /// <para>
+    /// All other non-managed env entries (proxy timeouts, API tuning, arbitrary
+    /// user vars, …) are intentionally <b>not</b> adopted: they are typically
+    /// shared across logins, and by staying out of <c>extra_env</c> they remain
+    /// untouched user env in <c>settings.json</c> that survives every switch. The
+    /// user can still add any of them to the account by hand in the import dialog.
+    /// The token, base URL and proxy keys are excluded regardless because they are
     /// captured separately (as the account secret / <see cref="Account.BaseUrl"/>
-    /// / global proxy) and would otherwise be duplicated.
+    /// / global proxy).
+    /// </para>
     /// </summary>
     /// <param name="settingsPath">Absolute path to Claude Code's settings.json.</param>
     /// <returns>
-    /// A dictionary of the non-managed string-valued env entries. Empty when
-    /// settings.json is missing, invalid, or has no <c>env</c> object.
+    /// A dictionary of the string-valued model-selector env entries. Empty when
+    /// settings.json is missing, invalid, or has no matching entries.
     /// </returns>
-    public static Dictionary<string, string> CurrentExtraEnv(string settingsPath)
+    public static Dictionary<string, string> CurrentModelEnv(string settingsPath)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -447,7 +456,7 @@ public static class Importer
 
         foreach (var (key, node) in envObj)
         {
-            if (SettingsEnv.ManagedKeys.Contains(key))
+            if (SettingsEnv.ManagedKeys.Contains(key) || !IsModelKey(key))
                 continue;
             if (node is JsonValue val && val.TryGetValue<string>(out var s) && !string.IsNullOrEmpty(s))
                 result[key] = s;
@@ -455,6 +464,15 @@ public static class Importer
 
         return result;
     }
+
+    /// <summary>
+    /// A model-selector env key: starts with <c>ANTHROPIC_</c> and contains
+    /// <c>_MODEL</c>. Such variables are per-account (the account's model choice)
+    /// rather than shared, so they are adopted into <c>extra_env</c> on import.
+    /// </summary>
+    private static bool IsModelKey(string key) =>
+        key.StartsWith("ANTHROPIC_", StringComparison.Ordinal) &&
+        key.Contains("_MODEL", StringComparison.Ordinal);
 
     // -----------------------------------------------------------------------
     // Internal helpers (internal so tests can exercise them)

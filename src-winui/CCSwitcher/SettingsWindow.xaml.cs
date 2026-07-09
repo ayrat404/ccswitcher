@@ -693,8 +693,10 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
-        // Step 2: show name prompt, pre-filling the current login's own env vars
-        // (non-managed keys) so they are adopted as the new account's extra_env.
+        // Step 2: show name prompt, pre-filling the current login's model-selector
+        // env vars (ANTHROPIC_*_MODEL) so they are adopted as the new account's
+        // extra_env. Other env vars are left untouched (shared across logins); the
+        // user can still add any of them by hand before confirming.
         var defaultName = Importer.DefaultName(candidate);
 
         var nameBox = new TextBox
@@ -704,7 +706,7 @@ public sealed partial class SettingsWindow : Window
             PlaceholderText = "Anthropic",
         };
 
-        var currentEnv = Importer.CurrentExtraEnv(ClaudePaths.SettingsPath);
+        var currentEnv = Importer.CurrentModelEnv(ClaudePaths.SettingsPath);
         var envEditor  = new EnvVarEditor(currentEnv.Count > 0 ? currentEnv : null);
 
         var panel = new StackPanel { Spacing = 10 };
