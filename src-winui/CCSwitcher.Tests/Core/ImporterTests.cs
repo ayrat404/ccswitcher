@@ -71,7 +71,7 @@ public sealed class ImporterTests : IDisposable
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-123"}}""");
         var creds = new InMemoryCredentialStore();
 
-        var result = Importer.Detect([], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
         Assert.IsType<ImportCandidate.Token>(result);
     }
@@ -82,7 +82,7 @@ public sealed class ImporterTests : IDisposable
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_API_KEY":"sk-456"}}""");
         var creds = new InMemoryCredentialStore();
 
-        var result = Importer.Detect([], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
         var tok = Assert.IsType<ImportCandidate.Token>(result);
         Assert.Equal(AuthKind.ApiKey, tok.AuthKind);
@@ -94,7 +94,7 @@ public sealed class ImporterTests : IDisposable
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-abc","ANTHROPIC_BASE_URL":"https://api.example.com"}}""");
         var creds = new InMemoryCredentialStore();
 
-        var result = Importer.Detect([], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
         var tok = Assert.IsType<ImportCandidate.Token>(result);
         Assert.Equal("https://api.example.com", tok.BaseUrl);
@@ -107,7 +107,7 @@ public sealed class ImporterTests : IDisposable
         var creds = new InMemoryCredentialStore();
         creds.Write("""{"claudeAiOauth":{"accessToken":"a"}}""");
 
-        var result = Importer.Detect([], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
         Assert.IsType<ImportCandidate.Oauth>(result);
     }
@@ -118,48 +118,40 @@ public sealed class ImporterTests : IDisposable
         var sp    = WriteSettings("""{"env":{}}""");
         var creds = new InMemoryCredentialStore();
 
-        var result = Importer.Detect([], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
         Assert.Null(result);
     }
 
     [Fact]
-    public void Detect_IgnoresManagedAuthTokenKey()
+    public void Detect_ReturnsToken_RegardlessOfManagedHistory()
     {
+        // Detection is value-based: a live AUTH_TOKEN is a candidate no matter
+        // whether ccswitcher ever wrote that key. "Already ours" is decided later,
+        // value-based, by FindDuplicate — not by a key-name list here. (This is the
+        // regression guard for an externally-swapped token, e.g. a different
+        // provider, that was previously blocked by the sticky managed_keys list.)
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-123"}}""");
         var creds = new InMemoryCredentialStore();
 
-        // Pass AUTH_TOKEN as managed → it should be ignored.
-        var result = Importer.Detect(["ANTHROPIC_AUTH_TOKEN"], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
-        Assert.Null(result);
+        Assert.IsType<ImportCandidate.Token>(result);
     }
 
     [Fact]
-    public void Detect_IgnoresManagedApiKeyKey()
+    public void Detect_WithLiveTokenAndOauthBlob_ReturnsTokenNotOauth()
     {
-        var sp    = WriteSettings("""{"env":{"ANTHROPIC_API_KEY":"sk-456"}}""");
-        var creds = new InMemoryCredentialStore();
-
-        var result = Importer.Detect(["ANTHROPIC_API_KEY"], sp, null, creds);
-
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public void Detect_ReturnsNull_WhenManagedTokenIsLive_IgnoresStaleOauthBlob()
-    {
-        // A managed AUTH_TOKEN present in env means a ccswitcher token account is
-        // the live login (Claude Code prefers env tokens over OAuth). The OAuth
-        // blob on disk is leftover from a previously-active OAuth account and must
-        // NOT be surfaced as a candidate.
+        // A live env token always wins over the OAuth credential blob (Claude Code
+        // precedence), so the candidate is the Token — never the (possibly stale)
+        // OAuth blob, and never null.
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-123"}}""");
         var creds = new InMemoryCredentialStore();
         creds.Write("""{"claudeAiOauth":{"accessToken":"a"}}""");
 
-        var result = Importer.Detect(["ANTHROPIC_AUTH_TOKEN"], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
-        Assert.Null(result);
+        Assert.IsType<ImportCandidate.Token>(result);
     }
 
     [Fact]
@@ -168,7 +160,7 @@ public sealed class ImporterTests : IDisposable
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-auth","ANTHROPIC_API_KEY":"sk-api"}}""");
         var creds = new InMemoryCredentialStore();
 
-        var result = Importer.Detect([], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
         var tok = Assert.IsType<ImportCandidate.Token>(result);
         Assert.Equal(AuthKind.AuthToken, tok.AuthKind);
@@ -184,36 +176,36 @@ public sealed class ImporterTests : IDisposable
         var creds = new InMemoryCredentialStore();
         creds.Write("""{"claudeAiOauth":{"accessToken":"a"}}""");
 
-        var result = Importer.Detect([], sp, ucp, creds);
+        var result = Importer.Detect(sp, ucp, creds);
 
         var oauth = Assert.IsType<ImportCandidate.Oauth>(result);
         Assert.Equal("acc-uuid", oauth.Identity);
     }
 
     [Fact]
-    public void Detect_ConstantManagedKeys_NotUsedForIgnore()
+    public void Detect_ReturnsToken_WithBaseUrl()
     {
-        // When managed_keys is empty, AUTH_TOKEN should be detected even though
-        // it appears in the constant SettingsEnv.ManagedKeys — the constant is
-        // NOT used for ignore; only the caller-supplied list is.
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-manual","ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}""");
         var creds = new InMemoryCredentialStore();
 
-        var result = Importer.Detect([], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
-        Assert.IsType<ImportCandidate.Token>(result);
+        var tok = Assert.IsType<ImportCandidate.Token>(result);
+        Assert.Equal("https://api.anthropic.com", tok.BaseUrl);
     }
 
     [Fact]
-    public void Detect_ConfigManagedKeys_UsedForIgnore()
+    public void Detect_ReturnsToken_ManagedKeysNoLongerConsulted()
     {
-        // When the config managed_keys list contains AUTH_TOKEN, it is ignored.
+        // managed_keys is no longer a Detect parameter: a live AUTH_TOKEN is always
+        // detected. (Replaces the old key-name-based ignore, which broke importing
+        // a token swapped in out-of-band.)
         var sp    = WriteSettings("""{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-manual"}}""");
         var creds = new InMemoryCredentialStore();
 
-        var result = Importer.Detect(["ANTHROPIC_AUTH_TOKEN"], sp, null, creds);
+        var result = Importer.Detect(sp, null, creds);
 
-        Assert.Null(result);
+        Assert.IsType<ImportCandidate.Token>(result);
     }
 
     // -----------------------------------------------------------------------
@@ -311,6 +303,113 @@ public sealed class ImporterTests : IDisposable
         Assert.Equal(AccountType.AnthropicOauth, created.Account.AccountType);
         Assert.Equal("user@example.com", created.Account.Identity);
         Assert.Equal(blob, store.Get(created.Account.Id));
+    }
+
+    [Fact]
+    public void Import_WithExtraEnv_SetsExtraEnvOnTokenAccount()
+    {
+        var candidate = new ImportCandidate.Token
+        {
+            Secret   = "sk-secret",
+            AuthKind = AuthKind.AuthToken,
+        };
+        var store    = new InMemorySecretStore();
+        var extraEnv = new Dictionary<string, string> { ["CUSTOM_VAR"] = "value" };
+
+        var result = Importer.Import(candidate, "Work", [], store, extraEnv);
+
+        var created = Assert.IsType<ImportResult.Created>(result);
+        Assert.Equal(extraEnv, created.Account.ExtraEnv);
+    }
+
+    [Fact]
+    public void Import_WithExtraEnv_SetsExtraEnvOnOauthAccount()
+    {
+        var candidate = new ImportCandidate.Oauth { Blob = "{}", Identity = "user@example.com" };
+        var store     = new InMemorySecretStore();
+        var extraEnv  = new Dictionary<string, string> { ["FOO"] = "bar" };
+
+        var result = Importer.Import(candidate, "Personal", [], store, extraEnv);
+
+        var created = Assert.IsType<ImportResult.Created>(result);
+        Assert.Equal(extraEnv, created.Account.ExtraEnv);
+    }
+
+    [Fact]
+    public void Import_WithoutExtraEnv_LeavesExtraEnvNull()
+    {
+        var candidate = new ImportCandidate.Token { Secret = "sk", AuthKind = AuthKind.AuthToken };
+        var store     = new InMemorySecretStore();
+
+        var result = Importer.Import(candidate, "Work", [], store);
+
+        var created = Assert.IsType<ImportResult.Created>(result);
+        Assert.Null(created.Account.ExtraEnvNullable);
+    }
+
+    // -----------------------------------------------------------------------
+    // CurrentExtraEnv tests
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void CurrentExtraEnv_ReturnsOnlyNonManagedKeys()
+    {
+        var path = WriteSettings("""
+        {
+          "env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk-live",
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "HTTP_PROXY": "http://127.0.0.1:8080",
+            "CUSTOM_VAR": "value",
+            "ANOTHER": "42"
+          }
+        }
+        """);
+
+        var env = Importer.CurrentExtraEnv(path);
+
+        Assert.Equal(2, env.Count);
+        Assert.Equal("value", env["CUSTOM_VAR"]);
+        Assert.Equal("42", env["ANOTHER"]);
+        Assert.DoesNotContain("ANTHROPIC_AUTH_TOKEN", env.Keys);
+        Assert.DoesNotContain("ANTHROPIC_BASE_URL", env.Keys);
+        Assert.DoesNotContain("HTTP_PROXY", env.Keys);
+    }
+
+    [Fact]
+    public void CurrentExtraEnv_ReturnsEmpty_WhenSettingsMissing()
+    {
+        var path = Path.Combine(_tmpDir, "does-not-exist.json");
+
+        Assert.Empty(Importer.CurrentExtraEnv(path));
+    }
+
+    [Fact]
+    public void CurrentExtraEnv_ReturnsEmpty_WhenNoEnvObject()
+    {
+        var path = WriteSettings("""{ "permissions": {} }""");
+
+        Assert.Empty(Importer.CurrentExtraEnv(path));
+    }
+
+    [Fact]
+    public void CurrentExtraEnv_SkipsNonStringAndEmptyValues()
+    {
+        var path = WriteSettings("""
+        {
+          "env": {
+            "GOOD": "yes",
+            "EMPTY": "",
+            "NUMBER": 5,
+            "NULLED": null
+          }
+        }
+        """);
+
+        var env = Importer.CurrentExtraEnv(path);
+
+        Assert.Single(env);
+        Assert.Equal("yes", env["GOOD"]);
     }
 
     [Fact]

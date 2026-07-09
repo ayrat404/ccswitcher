@@ -270,30 +270,36 @@ capture-on-switch-out.
 ccswitcher can adopt the login Claude Code is *currently* using as a new managed
 account.
 
-**Detection** (`Detect`), in priority order, using **only** `config.managed_keys`
-for "already ours" checks (never the constant managed set):
+**Detection** (`Detect`) is **value-based** — it does *not* consult
+`managed_keys` at all (that list is a sticky union across all switches, so
+key-name matching would wrongly block importing a token the user swapped in
+out-of-band, e.g. a different provider, even when no ccswitcher account matches
+its value). Priority order:
 
 1. **Token in env:** if `settings.json` `env` has a non-empty
-   `ANTHROPIC_AUTH_TOKEN` that is **not** in `managed_keys` → token candidate
-   (`auth_kind = auth_token`, capturing `ANTHROPIC_BASE_URL` if present).
-   Otherwise the same check for `ANTHROPIC_API_KEY` (`auth_kind = api_key`).
-   `AUTH_TOKEN` takes priority over `API_KEY`.
-2. **Live managed token:** if a *managed* token key is present and non-empty,
-   the current login is an existing ccswitcher token account → detection returns
-   nothing importable (Claude Code prefers env tokens over OAuth, so any
-   credential blob on disk is leftover, not the live login).
-3. **OAuth fallback:** if the credential store has a non-empty blob → OAuth
-   candidate. Identity is taken from the user config's `oauthAccount`
-   (accountUuid / emailAddress) when available, else extracted from the blob.
+   `ANTHROPIC_AUTH_TOKEN` → token candidate (`auth_kind = auth_token`,
+   capturing `ANTHROPIC_BASE_URL` if present). Otherwise the same check for
+   `ANTHROPIC_API_KEY` (`auth_kind = api_key`). `AUTH_TOKEN` takes priority over
+   `API_KEY`. Whether it is already one of our accounts is decided later,
+   value-based, by `FindDuplicate`.
+2. **Live token suppresses OAuth:** if *any* token key (managed or not) is present
+   and non-empty, the credential blob is not the live login (Claude Code prefers
+   env tokens over OAuth), so detection returns the token candidate from step 1
+   rather than falling back to OAuth.
+3. **OAuth fallback:** only when no token key is live — if the credential store
+   has a non-empty blob → OAuth candidate. Identity is taken from the user
+   config's `oauthAccount` (accountUuid / emailAddress) when available, else
+   extracted from the blob.
 
-**Already-managed active account** (`FindCurrentManagedAccount`): a precise
-short-circuit the UI calls so it can report *"current login is already imported
-as X"* instead of re-detecting. It considers **only the active token account**:
-returns that account iff its auth key (`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`,
-per its `auth_kind`) is in `managed_keys`, is present & non-empty in the live
-`settings.json` env, **and** still equals the secret stored in the keychain (so a
-manually-swapped token isn't misreported). OAuth accounts are intentionally not
-re-checked here — they are handled by `Detect` + `FindDuplicate` via identity.
+**Already-managed active account** (`FindCurrentManagedAccount`): a precise,
+value-checked short-circuit the UI calls so it can report *"current login is
+already imported as X"* instead of re-detecting. It considers **only the active
+token account**: returns that account iff its auth key
+(`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`, per its `auth_kind`) is in
+`managed_keys`, is present & non-empty in the live `settings.json` env, **and**
+still equals the secret stored in the keychain (so a manually-swapped token isn't
+misreported). OAuth accounts are intentionally not re-checked here — they are
+handled by `Detect` + `FindDuplicate` via identity.
 
 **Duplicate detection** (`FindDuplicate`):
 - **Token:** duplicate iff same `base_url` **and** same `auth_kind` **and** same
@@ -305,6 +311,16 @@ re-checked here — they are handled by `Detect` + `FindDuplicate` via identity.
 **Default name** suggestion: token with base_url → host of the base_url; token
 without → `"Token Account"`; OAuth with an email identity → that email; OAuth
 otherwise → `"Anthropic"`.
+
+**Adopting current env vars:** on import the UI pre-fills the account's
+`extra_env` with the current `settings.json` `env` entries that are **not** in the
+constant managed set (i.e. excluding `ANTHROPIC_BASE_URL`, the token keys, and the
+proxy keys — those are already captured as the secret / `base_url` / global proxy).
+The user may edit them before confirming. `Import` accepts this optional
+`extra_env` and records it on the created account, so the user's own variables are
+adopted rather than lost. (These keys are already live in `settings.json`, so
+after import `managed_keys` — built from the account's full env — matches on-disk
+state and a later switch strips them cleanly.)
 
 **Import result** (`Import`): creates the account, stores its secret in the
 keychain under the new `id`, and returns one of two outcomes:

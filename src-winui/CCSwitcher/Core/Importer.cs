@@ -1,16 +1,18 @@
 // Detect and import the current Claude Code login as a new account.
 //
-// Port of src-tauri/src/core/import.rs.
+// Two detection paths (value-based — "is this already one of our accounts?" is
+// decided by secret value via FindDuplicate, NOT by a key-name list):
+// 1. Token-based: settings.json env contains a non-empty ANTHROPIC_AUTH_TOKEN
+//    (preferred) or ANTHROPIC_API_KEY.
+// 2. OAuth-based: only when NO token key is live, the credential store's OAuth
+//    blob (a live env token always overrides the blob, per Claude Code
+//    precedence).
 //
-// Two detection paths:
-// 1. Token-based: settings.json env contains ANTHROPIC_AUTH_TOKEN or
-//    ANTHROPIC_API_KEY that ccswitcher isn't already managing.
-// 2. OAuth-based: the credential store has a non-empty OAuth blob.
-//
-// Detect() uses ONLY the caller-supplied managedKeys list for ignore logic —
-// never the constant SettingsEnv.ManagedKeys.  The constant represents keys
-// ccswitcher *may* write; managedKeys represents what it *has* written this
-// session.
+// managed_keys is intentionally NOT consulted by Detect: it is a sticky union
+// across all switches, so key-name matching would wrongly block importing a
+// token the user swapped in out-of-band (e.g. a different provider) even when no
+// ccswitcher account matches its value. FindCurrentManagedAccount still uses it
+// for the precise, value-checked active-account short-circuit.
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -91,13 +93,6 @@ public static class Importer
     /// <summary>
     /// Detect the current Claude Code login.
     /// </summary>
-    /// <param name="managedKeys">
-    /// Keys already managed by ccswitcher in this session (from
-    /// <see cref="AppConfig.ManagedKeys"/>).  These are skipped so we never
-    /// re-import our own injected values.
-    /// <para><b>IMPORTANT:</b> only this list is used for ignore — never the
-    /// constant <see cref="SettingsEnv.ManagedKeys"/>.</para>
-    /// </param>
     /// <param name="settingsPath">Absolute path to Claude Code's settings.json.</param>
     /// <param name="userConfigPath">
     /// Optional path to <c>~/.claude.json</c> for stable OAuth identity.
@@ -111,32 +106,36 @@ public static class Importer
     /// <exception cref="SettingsEnvException">
     /// settings.json exists but is invalid or not a JSON object.
     /// </exception>
+    /// <remarks>
+    /// Detection is <b>value-based</b>, not key-name-based: any non-empty
+    /// <c>ANTHROPIC_AUTH_TOKEN</c> (then <c>ANTHROPIC_API_KEY</c>) in the env is
+    /// returned as a token candidate, regardless of whether ccswitcher ever wrote
+    /// that key. Whether the candidate is already one of our accounts is decided
+    /// separately and value-based by <see cref="FindDuplicate"/> (and the precise
+    /// active-account check <see cref="FindCurrentManagedAccount"/>). This matters
+    /// because <c>managed_keys</c> is a sticky union across all switches and would
+    /// otherwise block importing a token the user swapped in out-of-band (e.g. a
+    /// different provider) even when no ccswitcher account matches its value.
+    /// </remarks>
     public static ImportCandidate? Detect(
-        IReadOnlyCollection<string> managedKeys,
         string settingsPath,
         string? userConfigPath,
         ICredentialStore credentialStore)
     {
-        // Build the set of keys ccswitcher is already managing from config.managed_keys.
-        // NOTE: We do NOT use the constant SettingsEnv.ManagedKeys here — that set
-        // represents keys we *might* manage, not the ones we've *actually* written.
-        var managedSet = new HashSet<string>(managedKeys, StringComparer.Ordinal);
-
         var settings = SettingsEnv.Load(settingsPath);
 
         JsonObject? envObj = null;
         if (settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject eo)
             envObj = eo;
 
-        // Check env for a non-managed token key.
+        // Any live token key is a candidate (value-based dedup happens later).
+        // Prefer AUTH_TOKEN over API_KEY.
         if (envObj is not null)
         {
-            // Prefer AUTH_TOKEN over API_KEY.
             if (envObj.TryGetPropertyValue("ANTHROPIC_AUTH_TOKEN", out var authTokenNode))
             {
                 var authToken = authTokenNode?.GetValue<string>();
-                if (!string.IsNullOrEmpty(authToken) &&
-                    !managedSet.Contains("ANTHROPIC_AUTH_TOKEN"))
+                if (!string.IsNullOrEmpty(authToken))
                 {
                     var baseUrl = TryGetString(envObj, "ANTHROPIC_BASE_URL");
                     return new ImportCandidate.Token
@@ -151,8 +150,7 @@ public static class Importer
             if (envObj.TryGetPropertyValue("ANTHROPIC_API_KEY", out var apiKeyNode))
             {
                 var apiKey = apiKeyNode?.GetValue<string>();
-                if (!string.IsNullOrEmpty(apiKey) &&
-                    !managedSet.Contains("ANTHROPIC_API_KEY"))
+                if (!string.IsNullOrEmpty(apiKey))
                 {
                     var baseUrl = TryGetString(envObj, "ANTHROPIC_BASE_URL");
                     return new ImportCandidate.Token
@@ -165,17 +163,14 @@ public static class Importer
             }
         }
 
-        // If a *managed* token key is present and non-empty in env, a ccswitcher
-        // token account is the current live login — Claude Code prefers env
-        // tokens over OAuth credentials, so any OAuth credential blob still on
-        // disk is leftover from a previously-active OAuth account and is NOT the
-        // current login. Surfacing it would match a different account and
-        // misreport that account as a duplicate. See FindCurrentManagedAccount
-        // for the caller-facing "already imported as X" message for this case.
-        if (envObj is not null && ManagedTokenLive(envObj, managedSet))
+        // A live env token always wins over the OAuth credential blob (Claude Code
+        // prefers env tokens over OAuth), so only fall back to the blob when NO
+        // token key is live. This also avoids surfacing a stale blob left on disk
+        // by a previously-active OAuth account.
+        if (envObj is not null && EnvTokenLive(envObj))
             return null;
 
-        // No non-managed (and no live managed) token key — fall back to OAuth.
+        // No live token key — fall back to OAuth.
         var blob = credentialStore.Read();
         if (blob is null)
             return null;
@@ -241,7 +236,8 @@ public static class Importer
         ImportCandidate candidate,
         string name,
         IReadOnlyList<Account> existingAccounts,
-        ISecretStore secretStore)
+        ISecretStore secretStore,
+        Dictionary<string, string>? extraEnv = null)
     {
         var id = Guid.NewGuid().ToString();
 
@@ -261,11 +257,12 @@ public static class Importer
             case ImportCandidate.Token t:
                 account = new Account
                 {
-                    Id          = id,
-                    Name        = name,
-                    AccountType = AccountType.Token,
-                    BaseUrl     = t.BaseUrl,
-                    AuthKind    = t.AuthKind,
+                    Id               = id,
+                    Name             = name,
+                    AccountType      = AccountType.Token,
+                    BaseUrl          = t.BaseUrl,
+                    AuthKind         = t.AuthKind,
+                    ExtraEnvNullable = extraEnv,
                 };
                 secretValue = t.Secret;
                 break;
@@ -273,10 +270,11 @@ public static class Importer
             case ImportCandidate.Oauth o:
                 account = new Account
                 {
-                    Id          = id,
-                    Name        = name,
-                    AccountType = AccountType.AnthropicOauth,
-                    Identity    = o.Identity,
+                    Id               = id,
+                    Name             = name,
+                    AccountType      = AccountType.AnthropicOauth,
+                    Identity         = o.Identity,
+                    ExtraEnvNullable = extraEnv,
                 };
                 secretValue = o.Blob;
                 break;
@@ -413,6 +411,52 @@ public static class Importer
     }
 
     // -----------------------------------------------------------------------
+    // CurrentExtraEnv
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// The current <c>settings.json</c> <c>env</c> entries that are NOT part of
+    /// the constant <see cref="SettingsEnv.ManagedKeys"/> set — i.e. the user's
+    /// own custom variables. Offered as pre-filled <c>extra_env</c> when importing
+    /// the current login, so they are adopted onto the new account rather than
+    /// lost. The token, base URL and proxy keys are excluded because they are
+    /// captured separately (as the account secret / <see cref="Account.BaseUrl"/>
+    /// / global proxy) and would otherwise be duplicated.
+    /// </summary>
+    /// <param name="settingsPath">Absolute path to Claude Code's settings.json.</param>
+    /// <returns>
+    /// A dictionary of the non-managed string-valued env entries. Empty when
+    /// settings.json is missing, invalid, or has no <c>env</c> object.
+    /// </returns>
+    public static Dictionary<string, string> CurrentExtraEnv(string settingsPath)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        JsonObject settings;
+        try
+        {
+            settings = SettingsEnv.Load(settingsPath);
+        }
+        catch (SettingsEnvException)
+        {
+            return result;
+        }
+
+        if (!settings.TryGetPropertyValue("env", out var envNode) || envNode is not JsonObject envObj)
+            return result;
+
+        foreach (var (key, node) in envObj)
+        {
+            if (SettingsEnv.ManagedKeys.Contains(key))
+                continue;
+            if (node is JsonValue val && val.TryGetValue<string>(out var s) && !string.IsNullOrEmpty(s))
+                result[key] = s;
+        }
+
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers (internal so tests can exercise them)
     // -----------------------------------------------------------------------
 
@@ -488,14 +532,16 @@ public static class Importer
     }
 
     /// <summary>
-    /// True when a managed token key (<c>ANTHROPIC_AUTH_TOKEN</c> /
+    /// True when <em>any</em> token key (<c>ANTHROPIC_AUTH_TOKEN</c> /
     /// <c>ANTHROPIC_API_KEY</c>) is present and non-empty in settings.json's env.
-    /// In that state a ccswitcher token account is the live login, so the OAuth
-    /// credential store is stale and must not be offered as an import candidate.
+    /// A live env token always overrides the OAuth credential blob (Claude Code
+    /// precedence), so in that state the credential store is stale and must not be
+    /// offered as an import candidate. This is independent of
+    /// <c>managed_keys</c>: even an externally-set token (different provider) is
+    /// the live login, and its value-based dedup is handled by
+    /// <see cref="FindDuplicate"/>.
     /// </summary>
-    private static bool ManagedTokenLive(JsonObject envObj, HashSet<string> managedSet) =>
-        (managedSet.Contains("ANTHROPIC_AUTH_TOKEN")
-            && !string.IsNullOrEmpty(TryGetString(envObj, "ANTHROPIC_AUTH_TOKEN")))
-        || (managedSet.Contains("ANTHROPIC_API_KEY")
-            && !string.IsNullOrEmpty(TryGetString(envObj, "ANTHROPIC_API_KEY")));
+    private static bool EnvTokenLive(JsonObject envObj) =>
+        !string.IsNullOrEmpty(TryGetString(envObj, "ANTHROPIC_AUTH_TOKEN"))
+        || !string.IsNullOrEmpty(TryGetString(envObj, "ANTHROPIC_API_KEY"));
 }

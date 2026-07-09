@@ -189,8 +189,8 @@ public partial class App : Application
 
                 Switcher.ApplyAccount(_config, accountId, deps);
 
-                // Rebuild tray on the UI thread after successful switch.
-                DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+                // Rebuild tray and refresh any open settings window.
+                RefreshUiAfterStateChange();
             }
             catch (Exception ex)
             {
@@ -221,7 +221,7 @@ public partial class App : Application
 
                 Proxy.SetEnabled(_config, enabled, deps);
 
-                DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+                RefreshUiAfterStateChange();
             }
             catch (Exception ex)
             {
@@ -267,8 +267,9 @@ public partial class App : Application
     private void OnToggleStartup(bool enabled)
     {
         StartupManager.SetEnabled(enabled);
-        // Rebuild tray so the toggle item reflects the new state.
-        DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+        // Rebuild tray (and refresh the open settings window) so the toggle
+        // reflects the new state.
+        RefreshUiAfterStateChange();
     }
 
     private void OnExit()
@@ -350,6 +351,21 @@ public partial class App : Application
     public void RebuildTray()
     {
         DispatchToUI(() => _trayIcon.Rebuild(_config, _callbacks!));
+    }
+
+    /// <summary>
+    /// Reflect a state change in every piece of UI: rebuild the tray menu and,
+    /// when the settings window is open, re-populate its controls. Called after
+    /// mutating tray callbacks so an open settings window never shows stale state.
+    /// Safe to call from any thread (marshals onto the UI thread).
+    /// </summary>
+    private void RefreshUiAfterStateChange()
+    {
+        DispatchToUI(() =>
+        {
+            _trayIcon.Rebuild(_config, _callbacks!);
+            _settingsWindow?.RefreshFromExternal();
+        });
     }
 
     // -----------------------------------------------------------------------

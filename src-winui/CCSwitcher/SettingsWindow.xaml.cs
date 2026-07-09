@@ -143,6 +143,13 @@ public sealed partial class SettingsWindow : Window
             async () => await RunImportFlowAsync());
     }
 
+    /// <summary>
+    /// Re-populate all controls from the current config. Called by <see cref="App"/>
+    /// after an external (tray-driven) state change — switch, proxy toggle, startup
+    /// toggle — so this window never shows stale state. Must run on the UI thread.
+    /// </summary>
+    public void RefreshFromExternal() => Refresh();
+
     // -----------------------------------------------------------------------
     // Refresh: populate all controls from current config
     // -----------------------------------------------------------------------
@@ -265,6 +272,31 @@ public sealed partial class SettingsWindow : Window
     }
 
     // -----------------------------------------------------------------------
+    // Dialog sizing
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Widen a <see cref="ContentDialog"/> beyond the default ~548 dip cap so the
+    /// env-var key/value rows have comfortable room, while staying inside the
+    /// settings window (680 dip). The content is stretched to fill the dialog and
+    /// sized just under the window width minus the dialog's own chrome/padding, so
+    /// the right-hand "remove variable" button never clips off the edge.
+    /// </summary>
+    private static void WidenDialog(ContentDialog dialog, FrameworkElement content)
+    {
+        // ContentDialogMaxWidth only caps the width; without an explicit content
+        // width the panel shrinks to its content's desired size (≈ the default
+        // ~500 dip), so the dialog looks unchanged. Pin an explicit content width
+        // to actually widen it, and raise the cap above it so it isn't clamped.
+        // A ContentDialog can never exceed its host window (680 dip), and the
+        // dialog adds ~40 dip of its own padding, so 600 is the widest content
+        // that fits without clipping the right-hand "remove variable" button.
+        dialog.Resources["ContentDialogMaxWidth"] = 720.0;
+        content.HorizontalAlignment = HorizontalAlignment.Stretch;
+        content.Width = 520;
+    }
+
+    // -----------------------------------------------------------------------
     // Status bar helpers
     // -----------------------------------------------------------------------
 
@@ -371,6 +403,7 @@ public sealed partial class SettingsWindow : Window
             DefaultButton     = ContentDialogButton.Primary,
             XamlRoot          = this.Content.XamlRoot,
         };
+        WidenDialog(dialog, panel);
 
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
@@ -481,6 +514,7 @@ public sealed partial class SettingsWindow : Window
             DefaultButton     = ContentDialogButton.Primary,
             XamlRoot          = this.Content.XamlRoot,
         };
+        WidenDialog(dialog, panel);
 
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
@@ -617,9 +651,7 @@ public sealed partial class SettingsWindow : Window
         ImportCandidate? candidate;
         try
         {
-            var config = _app.GetConfig();
             candidate = Importer.Detect(
-                config.ManagedKeys,
                 ClaudePaths.SettingsPath,
                 ClaudePaths.FindUserConfig(),
                 _app.GetCredentialStore());
@@ -661,7 +693,8 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
-        // Step 2: show name prompt
+        // Step 2: show name prompt, pre-filling the current login's own env vars
+        // (non-managed keys) so they are adopted as the new account's extra_env.
         var defaultName = Importer.DefaultName(candidate);
 
         var nameBox = new TextBox
@@ -671,20 +704,29 @@ public sealed partial class SettingsWindow : Window
             PlaceholderText = "Anthropic",
         };
 
+        var currentEnv = Importer.CurrentExtraEnv(ClaudePaths.SettingsPath);
+        var envEditor  = new EnvVarEditor(currentEnv.Count > 0 ? currentEnv : null);
+
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(nameBox);
+        panel.Children.Add(envEditor.Root);
+
         var importDialog = new ContentDialog
         {
             Title             = "Import Current Login",
-            Content           = nameBox,
+            Content           = panel,
             PrimaryButtonText = "Import",
             CloseButtonText   = "Cancel",
             DefaultButton     = ContentDialogButton.Primary,
             XamlRoot          = this.Content.XamlRoot,
         };
+        WidenDialog(importDialog, panel);
 
         var result = await importDialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
         var name = string.IsNullOrWhiteSpace(nameBox.Text) ? defaultName : nameBox.Text.Trim();
+        var importExtraEnv = envEditor.Collect();
 
         // Step 3: import
         await App.StateMutex.WaitAsync();
@@ -696,7 +738,8 @@ public sealed partial class SettingsWindow : Window
                 candidate,
                 name,
                 config.Accounts,
-                _app.GetSecretStore());
+                _app.GetSecretStore(),
+                importExtraEnv);
 
             Account newAccount;
             string? warning = null;
@@ -940,8 +983,8 @@ public sealed partial class SettingsWindow : Window
             };
 
             var row = new Grid { ColumnSpacing = 6 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1,   GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1,   GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             Grid.SetColumn(keyBox, 0);
