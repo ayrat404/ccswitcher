@@ -961,8 +961,11 @@ public sealed partial class SettingsWindow : Window
             sharedGroup.Children.Add(BuildSharedReadOnlyNote(buckets.SharedReadOnlyKeys));
         panel.Children.Add(sharedGroup);
 
-        // Snapshot data the Save routing (Task 4) needs, captured in this closure.
-        var oldSharedKeys = buckets.Shared.Select(k => k.Key).ToList();
+        // Snapshot data the Save routing needs, captured in this closure. The full
+        // key/value map lets Save detect value-only edits (not just added/removed
+        // keys) and feeds ApplySharedEnv's old-key set.
+        var oldShared = buckets.Shared.ToDictionary(
+            k => k.Key, k => k.Value, StringComparer.Ordinal);
 
         // Outer scroll so the three groups fit inside the ~680 dip window.
         var scroll = new ScrollViewer
@@ -987,17 +990,99 @@ public sealed partial class SettingsWindow : Window
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
-        // TODO(Task 4): implement the Save routing here. Under App.StateMutex
-        // (released in a finally): re-read the active account from a fresh config
-        // (guards against a tray switch between open and Save); validate the
-        // collected Shared keys don't collide with SettingsEnv.ManagedKeys or the
-        // active account's extra_env keys (else ShowError, don't save/close);
-        // route AccountExtra via active.ExtraEnvNullable + ReapplyActiveEnvIfActive;
-        // route Shared via SettingsEnv.Load -> ApplySharedEnv(settings,
-        // oldSharedKeys, newShared) -> AtomicFile backup + atomic write; then
-        // App.RebuildTray() + Refresh() + ShowSuccess. The snapshot captured above
-        // (active?.Id, extraEditor, sharedEditor, oldSharedKeys) feeds that flow.
-        _ = (active, extraEditor, sharedEditor, oldSharedKeys);
+        // Collect the editor state before taking the mutex. Collect() returns null
+        // when the editor has no non-empty rows.
+        var extraCollected = extraEditor?.Collect();
+        var newShared      = sharedEditor.Collect() ?? new Dictionary<string, string>();
+
+        await App.StateMutex.WaitAsync();
+        try
+        {
+            // Step 0: re-read from a fresh config. The dialog is a snapshot taken
+            // outside the mutex; a tray switch may have changed the active account
+            // between open and Save, so resolve the fresh Account object by id.
+            var freshConfig = _app.GetConfig();
+            var freshActive = active is null
+                ? null
+                : freshConfig.Accounts.Find(a => a.Id == active.Id);
+
+            // Step 1: validation. A Shared key must not collide with a managed key
+            // name or with the active account's extra_env keys — that keeps the
+            // three buckets disjoint and settings.json in sync with
+            // config.ManagedKeys. Reject without writing anything.
+            var extraKeys = extraCollected is null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(extraCollected.Keys, StringComparer.Ordinal);
+            foreach (var key in newShared.Keys)
+            {
+                if (SettingsEnv.ManagedKeys.Contains(key) || extraKeys.Contains(key))
+                {
+                    ShowError($"Cannot override managed/account key \"{key}\".");
+                    return;
+                }
+            }
+
+            // Step 2: AccountExtra. If an account is active and its extra_env set
+            // changed, update it and re-apply (rebuilds the managed region + atomic
+            // write + config save). Does not touch shared keys.
+            if (freshActive != null &&
+                !EnvDictEquals(extraCollected, freshActive.ExtraEnvNullable))
+            {
+                freshActive.ExtraEnvNullable = extraCollected;
+                ReapplyActiveEnvIfActive(freshConfig, freshActive.Id);
+            }
+
+            // Step 3: Shared. If the shared set changed vs the snapshot, write only
+            // the touched shared keys back to settings.json (managed and extra_env
+            // are left untouched). Disjoint from step 2, so order does not matter.
+            if (!EnvDictEquals(newShared, oldShared))
+            {
+                var newSettings = SettingsEnv.Load(ClaudePaths.SettingsPath);
+                SettingsEnv.ApplySharedEnv(newSettings, oldShared.Keys, newShared);
+
+                var backupsDir = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(ClaudePaths.SettingsPath) ?? ".",
+                    "backups");
+                AtomicFile.Backup(ClaudePaths.SettingsPath, backupsDir);
+
+                var json = newSettings.ToJsonString(
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                AtomicFile.Write(ClaudePaths.SettingsPath, json);
+            }
+
+            // Step 4: reflect the new state and confirm.
+            _app.RebuildTray();
+            Refresh();
+            ShowSuccess("Environment variables saved.");
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+        }
+        finally
+        {
+            App.StateMutex.Release();
+        }
+    }
+
+    /// <summary>
+    /// Value-equality for two env maps, treating null and empty as equal. Used to
+    /// decide whether an env bucket actually changed before writing it back.
+    /// </summary>
+    private static bool EnvDictEquals(
+        IReadOnlyDictionary<string, string>? a,
+        IReadOnlyDictionary<string, string>? b)
+    {
+        var an = a?.Count ?? 0;
+        var bn = b?.Count ?? 0;
+        if (an != bn) return false;
+        if (a is null || b is null) return true; // both empty
+        foreach (var kv in a)
+        {
+            if (!b.TryGetValue(kv.Key, out var v) || v != kv.Value)
+                return false;
+        }
+        return true;
     }
 
     /// <summary>

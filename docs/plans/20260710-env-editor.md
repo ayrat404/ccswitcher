@@ -232,20 +232,20 @@ public static JsonObject ApplySharedEnv(
 **Files:**
 - Modify: `src-winui/CCSwitcher/SettingsWindow.xaml.cs`
 
-- [ ] реализовать Save под `App.StateMutex` (отпуск в `finally`)
-- [ ] под мьютексом перечитать активный аккаунт из свежего `config` (защита от
+- [x] реализовать Save под `App.StateMutex` (отпуск в `finally`)
+- [x] под мьютексом перечитать активный аккаунт из свежего `config` (защита от
       switch из трея между открытием диалога и Save)
-- [ ] валидация: пересечение shared-ключей (`envEditor.Collect()`) с
+- [x] валидация: пересечение shared-ключей (`envEditor.Collect()`) с
       `SettingsEnv.ManagedKeys` **и** с ключами `extra_env` активного аккаунта
       (набор AccountExtra) → `ShowError` («нельзя переопределять ключ X»),
       не сохранять, диалог не закрывать
-- [ ] AccountExtra: если активный аккаунт есть и набор изменился —
+- [x] AccountExtra: если активный аккаунт есть и набор изменился —
       `active.ExtraEnvNullable = collected ?? null` → `ReapplyActiveEnvIfActive`
-- [ ] Shared: если изменился — `SettingsEnv.Load` → `ApplySharedEnv(settings,
+- [x] Shared: если изменился — `SettingsEnv.Load` → `ApplySharedEnv(settings,
       oldSharedStringKeys, newShared)` → backup + atomic write через `AtomicFile`
-- [ ] после успеха: `App.RebuildTray()` + `Refresh()` + `ShowSuccess`; ошибки через
+- [x] после успеха: `App.RebuildTray()` + `Refresh()` + `ShowSuccess`; ошибки через
       `Secrets.Sanitize`; диалог закрыть только при успехе
-- [ ] UI-код тестами не покрывается; логика роутинга `extra_env` уже покрыта
+- [x] UI-код тестами не покрывается; логика роутинга `extra_env` уже покрыта
       тестами `ReapplyActiveAccountEnv`
 
 ### Task 5: Обновить документацию контракта
