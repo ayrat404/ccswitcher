@@ -165,21 +165,21 @@ public static JsonObject ApplySharedEnv(
 - Modify: `src-winui/CCSwitcher.Tests/SettingsEnvTests.cs` (или создать
   `EnvBucketsTests.cs` рядом, если файла нет)
 
-- [ ] добавить `public sealed record EnvBuckets(...)` (Managed, AccountExtra,
+- [x] добавить `public sealed record EnvBuckets(...)` (Managed, AccountExtra,
       Shared, SharedReadOnlyKeys) в `Core/` (в `SettingsEnv.cs` или соседний файл)
-- [ ] реализовать `public static EnvBuckets ClassifyEnv(JsonObject settings,
+- [x] реализовать `public static EnvBuckets ClassifyEnv(JsonObject settings,
       Account? active)`: читать только `env`-объект; managed по `ManagedKeys`
       (фиксированный порядок), AccountExtra по `active?.ExtraEnv.Keys` минус
       managed, остальное — Shared; нестроковые значения shared → `SharedReadOnlyKeys`
-- [ ] managed/AccountExtra значения приводить к строке (они всегда строки);
+- [x] managed/AccountExtra значения приводить к строке (они всегда строки);
       shared со строковым значением → Shared, иначе → read-only
-- [ ] тест: пустой/отсутствующий `env` → все корзины пустые
-- [ ] тест: только shared-ключи, `active == null` → всё в Shared, AccountExtra пуст
-- [ ] тест: активный аккаунт с `extra_env` → ключи в AccountExtra, не в Shared
-- [ ] тест: коллизия имени managed и extra_env → ключ в Managed (managed выигрывает)
-- [ ] тест: нестроковое shared-значение (число/массив) → в `SharedReadOnlyKeys`,
+- [x] тест: пустой/отсутствующий `env` → все корзины пустые
+- [x] тест: только shared-ключи, `active == null` → всё в Shared, AccountExtra пуст
+- [x] тест: активный аккаунт с `extra_env` → ключи в AccountExtra, не в Shared
+- [x] тест: коллизия имени managed и extra_env → ключ в Managed (managed выигрывает)
+- [x] тест: нестроковое shared-значение (число/массив) → в `SharedReadOnlyKeys`,
       не в Shared
-- [ ] запустить тесты — должны пройти до Task 2
+- [x] запустить тесты — должны пройти до Task 2
 
 ### Task 2: Точечная запись shared — `SettingsEnv.ApplySharedEnv`
 

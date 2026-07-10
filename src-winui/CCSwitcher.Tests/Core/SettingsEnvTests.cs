@@ -384,4 +384,143 @@ public sealed class SettingsEnvTests : IDisposable
 
         Assert.Empty(captured);
     }
+
+    // -----------------------------------------------------------------------
+    // ClassifyEnv (env split into managed / account-extra / shared buckets)
+    // -----------------------------------------------------------------------
+
+    private static Account AccountWithExtra(params (string k, string v)[] pairs)
+        => new()
+        {
+            Id = "acc-1",
+            Name = "Test",
+            AccountType = AccountType.Token,
+            ExtraEnvNullable = pairs.Length == 0
+                ? null
+                : pairs.ToDictionary(p => p.k, p => p.v),
+        };
+
+    [Fact]
+    public void ClassifyEnv_MissingEnv_AllBucketsEmpty()
+    {
+        var settings = JsonNode.Parse("""{"permissions":{}}""")!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Empty(buckets.Managed);
+        Assert.Empty(buckets.AccountExtra);
+        Assert.Empty(buckets.Shared);
+        Assert.Empty(buckets.SharedReadOnlyKeys);
+    }
+
+    [Fact]
+    public void ClassifyEnv_EmptyEnvObject_AllBucketsEmpty()
+    {
+        var settings = JsonNode.Parse("""{"env":{}}""")!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Empty(buckets.Managed);
+        Assert.Empty(buckets.AccountExtra);
+        Assert.Empty(buckets.Shared);
+        Assert.Empty(buckets.SharedReadOnlyKeys);
+    }
+
+    [Fact]
+    public void ClassifyEnv_OnlySharedKeys_NoActive_AllInShared()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"FOO":"1","BAR":"2"}}""")!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Empty(buckets.Managed);
+        Assert.Empty(buckets.AccountExtra);
+        Assert.Equal(2, buckets.Shared.Count);
+        Assert.Contains(new KeyValuePair<string, string>("FOO", "1"), buckets.Shared);
+        Assert.Contains(new KeyValuePair<string, string>("BAR", "2"), buckets.Shared);
+    }
+
+    [Fact]
+    public void ClassifyEnv_PreservesFileOrderForShared()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"Z":"1","A":"2","M":"3"}}""")!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Equal(new[] { "Z", "A", "M" }, buckets.Shared.Select(kv => kv.Key).ToArray());
+    }
+
+    [Fact]
+    public void ClassifyEnv_ManagedKeysGoToManagedBucket()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"ANTHROPIC_BASE_URL":"https://x","ANTHROPIC_AUTH_TOKEN":"tok","FOO":"bar"}}""")!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Contains(new KeyValuePair<string, string>("ANTHROPIC_BASE_URL", "https://x"), buckets.Managed);
+        Assert.Contains(new KeyValuePair<string, string>("ANTHROPIC_AUTH_TOKEN", "tok"), buckets.Managed);
+        Assert.Single(buckets.Shared);
+        Assert.Contains(new KeyValuePair<string, string>("FOO", "bar"), buckets.Shared);
+    }
+
+    [Fact]
+    public void ClassifyEnv_ExtraEnvKeys_GoToAccountExtra_NotShared()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"ANTHROPIC_MODEL":"opus","FOO":"bar"}}""")!.AsObject();
+        var active = AccountWithExtra(("ANTHROPIC_MODEL", "opus"));
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active);
+
+        Assert.Contains(new KeyValuePair<string, string>("ANTHROPIC_MODEL", "opus"), buckets.AccountExtra);
+        Assert.DoesNotContain(buckets.Shared, kv => kv.Key == "ANTHROPIC_MODEL");
+        Assert.Contains(new KeyValuePair<string, string>("FOO", "bar"), buckets.Shared);
+    }
+
+    [Fact]
+    public void ClassifyEnv_ManagedNameCollidesWithExtraEnv_ManagedWins()
+    {
+        // Active account declares ANTHROPIC_BASE_URL in extra_env, but it is a
+        // managed key → it must land in Managed, not AccountExtra.
+        var settings = JsonNode.Parse(
+            """{"env":{"ANTHROPIC_BASE_URL":"https://x"}}""")!.AsObject();
+        var active = AccountWithExtra(("ANTHROPIC_BASE_URL", "https://x"));
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active);
+
+        Assert.Contains(new KeyValuePair<string, string>("ANTHROPIC_BASE_URL", "https://x"), buckets.Managed);
+        Assert.Empty(buckets.AccountExtra);
+        Assert.Empty(buckets.Shared);
+    }
+
+    [Fact]
+    public void ClassifyEnv_NonStringSharedValue_GoesToReadOnlyKeys()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"NUM":5,"ARR":[1,2],"OBJ":{"a":1},"NULLED":null,"STR":"ok"}}""")!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Single(buckets.Shared);
+        Assert.Contains(new KeyValuePair<string, string>("STR", "ok"), buckets.Shared);
+        Assert.Equal(new[] { "NUM", "ARR", "OBJ", "NULLED" }, buckets.SharedReadOnlyKeys.ToArray());
+    }
+
+    [Fact]
+    public void ClassifyEnv_ExtraEnvKeyAbsentFromEnv_NotEmitted()
+    {
+        // extra_env declares a key that is not present in the live env → it is
+        // simply not classified (ClassifyEnv reads only the env object).
+        var settings = JsonNode.Parse(
+            """{"env":{"FOO":"bar"}}""")!.AsObject();
+        var active = AccountWithExtra(("ANTHROPIC_MODEL", "opus"));
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active);
+
+        Assert.Empty(buckets.AccountExtra);
+        Assert.Single(buckets.Shared);
+    }
 }

@@ -84,6 +84,89 @@ public static class SettingsEnv
     }
 
     /// <summary>
+    /// Classify the live <c>env</c> block of <paramref name="settings"/> into three
+    /// disjoint buckets so a UI can render the whole block while only allowing the
+    /// safe-to-edit keys to be changed:
+    /// <list type="bullet">
+    ///   <item><b>Managed</b> — keys in the constant <see cref="ManagedKeys"/> set
+    ///   (base url, tokens, proxy). Read-only; edited via account/proxy dialogs.
+    ///   Emitted in the fixed <see cref="ManagedKeys"/> order.</item>
+    ///   <item><b>AccountExtra</b> — keys of the active account's
+    ///   <c>extra_env</c> that are present in <c>env</c> and not managed
+    ///   (managed wins on a name collision). Editable.</item>
+    ///   <item><b>Shared</b> — every other <c>env</c> key with a string value.
+    ///   Editable.</item>
+    /// </list>
+    /// Non-managed, non-extra keys whose value is <b>not</b> a string (number,
+    /// array, object, null) cannot be edited in a text field, so their names are
+    /// returned separately in <see cref="EnvBuckets.SharedReadOnlyKeys"/> and are
+    /// excluded from <see cref="EnvBuckets.Shared"/>. Managed and extra_env values
+    /// are always strings; a non-string value is coerced to its JSON text.
+    /// AccountExtra and Shared preserve the order the keys appear in the file.
+    /// </summary>
+    /// <param name="settings">The full settings object loaded by <see cref="Load"/>.</param>
+    /// <param name="active">The currently active account, or <c>null</c> when none
+    /// is active (then AccountExtra is always empty).</param>
+    public static EnvBuckets ClassifyEnv(JsonObject settings, Account? active)
+    {
+        JsonObject? envObj = null;
+        if (settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject eo)
+            envObj = eo;
+
+        var managed = new List<KeyValuePair<string, string>>();
+        var accountExtra = new List<KeyValuePair<string, string>>();
+        var shared = new List<KeyValuePair<string, string>>();
+        var sharedReadOnly = new List<string>();
+
+        if (envObj is null)
+            return new EnvBuckets(managed, accountExtra, shared, sharedReadOnly);
+
+        // Managed first, in the fixed ManagedKeys order.
+        foreach (var key in ManagedKeys)
+        {
+            if (envObj.TryGetPropertyValue(key, out var node))
+                managed.Add(new KeyValuePair<string, string>(key, NodeToString(node)));
+        }
+
+        var extraKeys = active is not null
+            ? new HashSet<string>(active.ExtraEnv.Keys, StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+
+        // Everything else, in file order.
+        foreach (var kvp in envObj)
+        {
+            var key = kvp.Key;
+            if (ManagedKeys.Contains(key))
+                continue; // managed wins on a name collision
+
+            if (extraKeys.Contains(key))
+            {
+                accountExtra.Add(new KeyValuePair<string, string>(key, NodeToString(kvp.Value)));
+                continue;
+            }
+
+            if (kvp.Value is JsonValue val && val.TryGetValue<string>(out var s))
+                shared.Add(new KeyValuePair<string, string>(key, s));
+            else
+                sharedReadOnly.Add(key); // non-string: not editable in a text field
+        }
+
+        return new EnvBuckets(managed, accountExtra, shared, sharedReadOnly);
+    }
+
+    /// <summary>
+    /// Coerce a JSON node to a string: a JSON string yields its raw value; any
+    /// other node (number/bool/array/object) yields its JSON text; <c>null</c>
+    /// yields the empty string.
+    /// </summary>
+    private static string NodeToString(JsonNode? node)
+    {
+        if (node is JsonValue val && val.TryGetValue<string>(out var s))
+            return s;
+        return node?.ToJsonString() ?? string.Empty;
+    }
+
+    /// <summary>
     /// Merge app-managed env keys into <paramref name="settings"/>.
     /// </summary>
     /// <param name="settings">
@@ -237,6 +320,25 @@ public static class SettingsEnv
         }
     }
 }
+
+/// <summary>
+/// The live <c>settings.json</c> <c>env</c> block split into disjoint buckets by
+/// <see cref="SettingsEnv.ClassifyEnv"/>. See that method for the classification
+/// rules and ordering guarantees.
+/// </summary>
+/// <param name="Managed">App-owned keys (base url / tokens / proxy). Read-only.
+/// In fixed <see cref="SettingsEnv.ManagedKeys"/> order.</param>
+/// <param name="AccountExtra">Active account's <c>extra_env</c> keys present in
+/// <c>env</c>. Editable. File order.</param>
+/// <param name="Shared">All other string-valued <c>env</c> keys. Editable.
+/// File order.</param>
+/// <param name="SharedReadOnlyKeys">Non-managed, non-extra keys whose value is not
+/// a string (number/array/object/null); shown read-only and never edited.</param>
+public sealed record EnvBuckets(
+    IReadOnlyList<KeyValuePair<string, string>> Managed,
+    IReadOnlyList<KeyValuePair<string, string>> AccountExtra,
+    IReadOnlyList<KeyValuePair<string, string>> Shared,
+    IReadOnlyList<string> SharedReadOnlyKeys);
 
 /// <summary>
 /// Exception raised while loading or merging <c>settings.json</c>.
