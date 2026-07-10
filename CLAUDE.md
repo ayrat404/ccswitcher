@@ -42,7 +42,11 @@ same change whenever you alter any of that behaviour.
    `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `HTTP_PROXY`, `HTTPS_PROXY`,
    `NO_PROXY`) plus the active account's `extra_env` keys. The user's own env
    keys and all non-`env` settings are never lost. The whole file is never
-   blindly rewritten.
+   blindly rewritten. The **one** path by which ccswitcher writes a *non-managed*
+   env key is the env editor (settings window → Environment → Manage…): the user
+   may explicitly edit "shared" keys (non-managed, non-`extra_env`) there, and
+   only those keys are touched — a targeted, touched-only merge. The managed
+   region and `extra_env` are still never blindly rewritten by it.
 
 2. **Capture-on-switch-out for OAuth.** Claude Code refreshes OAuth tokens in
    place, so a one-time import snapshot goes stale. Before switching *away* from

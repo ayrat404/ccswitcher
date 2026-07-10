@@ -287,6 +287,66 @@ and clobber the edit). So the edit takes effect at once rather than only on the
 next switch. Editing a **non-active** account updates only its stored definition
 and never touches `settings.json`.
 
+### Env editor (editing `settings.json` `env` in-app)
+
+The settings UI can present the **whole** live `env` block of `settings.json`
+for viewing and safe editing, without the user hand-editing the JSON. This is the
+**only** path by which ccswitcher writes a *non-managed* env key
+([INV-1](#inv-1--app-owns-only-managed-keys) still holds: the managed region and
+`extra_env` are never blindly rewritten by it).
+
+**Classification into three disjoint buckets.** On open, the live `env` object is
+split (a pure, stateless classifier) against the constant managed set and the
+active account's `extra_env` keys:
+
+- **Managed** — keys in the constant managed-key set ([INV-1](#inv-1--app-owns-only-managed-keys)).
+  **Read-only**; changed only via the account/proxy dialogs. Emitted in the fixed
+  managed-key order.
+- **AccountExtra** — keys of the **active** account's `extra_env` that are present
+  in `env` and are **not** managed (managed wins on a name collision). **Editable**;
+  saved into the account's `extra_env`. Empty when no account is active.
+- **Shared** — every **other** `env` key **whose value is a string**. **Editable**;
+  written directly back into `settings.json`'s `env`.
+
+Non-managed, non-`extra_env` keys whose value is **not** a string (number, array,
+object, null) cannot be edited in a text field, so they are surfaced **read-only**
+for visibility only, are excluded from the editable Shared bucket, and are **never**
+touched on Save. (Managed and `extra_env` values are always strings.) AccountExtra
+and Shared preserve file order; Managed uses the fixed managed-key order.
+
+**Token masking.** In the read-only Managed view, the two secret-bearing keys
+(`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`) are masked — a present value renders
+as a placeholder (e.g. `••••••`) and an absent one as `(unset)`; the secret is
+never rendered or selectable.
+
+**Corrupt input.** If `settings.json` is invalid JSON, the editor does **not**
+open and nothing is written — a sanitized error is surfaced instead.
+
+**Save routing** (under the app-wide lock; see [§10](#10-concurrency)). The dialog
+is a snapshot taken *outside* the lock, so on Save the active account is re-resolved
+by id from a fresh config read (a tray switch may have happened in between). Then:
+
+1. **Validation.** A Shared key name must not collide with a managed key name
+   **or** with an active-account `extra_env` key name. On any collision the whole
+   Save is **rejected with no write** (keeping the three buckets disjoint and
+   `settings.json` in sync with `config.managed_keys`).
+2. **AccountExtra** (only if an account is active and its `extra_env` set actually
+   changed) → update the account's `extra_env` and re-apply its env via the same
+   "lighter than a switch" re-apply used for in-app edits (rebuilds the managed
+   region, atomic-writes `settings.json`, saves config). Touches no Shared key.
+3. **Shared** (only if the shared set actually changed) → a **targeted,
+   touched-only merge** into `settings.json`'s `env`: remove **only** the shared
+   keys that were present when the editor opened and are now gone, write back the
+   kept/added ones, and leave the **managed** keys, the account's `extra_env`
+   keys, and the read-only non-string shared keys **completely untouched** (the
+   managed union is **not** stripped — unlike the switch-flow merge in
+   [§7 step 6](#7-switch-flow-the-8-steps)). Then backup + atomic write
+   ([§6](#6-atomic-write--backup)).
+
+Steps 2 and 3 touch disjoint key sets, so their order does not matter and a
+partial failure never desynchronizes the buckets — re-running Save re-applies the
+remaining side. The dialog closes only on success.
+
 ---
 
 ## 8. Import (detect current login)
