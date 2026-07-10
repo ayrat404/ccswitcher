@@ -139,6 +139,20 @@
                     </tkit:SettingsExpander.Items>
                 </tkit:SettingsExpander>
 
+                <!-- ============================ Environment =================== -->
+                <TextBlock Text="Environment"
+                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                           Margin="0,28,0,8"/>
+
+                <tkit:SettingsCard Header="Environment variables"
+                                   Description="View and edit the env block of Claude Code's settings.json.">
+                    <tkit:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE943;"/>
+                    </tkit:SettingsCard.HeaderIcon>
+                    <Button Content="Manage…"
+                            Click="ManageEnvBtn_Click"/>
+                </tkit:SettingsCard>
+
                 <!-- ============================ Startup ======================= -->
                 <TextBlock Text="Startup"
                            Style="{StaticResource BodyStrongTextBlockStyle}"

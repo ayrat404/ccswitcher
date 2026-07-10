@@ -205,26 +205,26 @@ public static JsonObject ApplySharedEnv(
 - Modify: `src-winui/CCSwitcher/SettingsWindow.xaml`
 - Modify: `src-winui/CCSwitcher/SettingsWindow.xaml.cs`
 
-- [ ] добавить в XAML секцию «Environment» после «Proxy»: `SettingsCard` с
+- [x] добавить в XAML секцию «Environment» после «Proxy»: `SettingsCard` с
       иконкой + кнопка «Manage…» (`Click="ManageEnvBtn_Click"`)
-- [ ] в code-behind: обработчик открывает `ContentDialog`, расширенный
+- [x] в code-behind: обработчик открывает `ContentDialog`, расширенный
       `WidenDialog`; при открытии `SettingsEnv.Load` + `ClassifyEnv` (битый JSON →
       `ShowError`, не открывать)
-- [ ] построить три группы: (1) Managed — read-only карточки, **токен маскируется**
+- [x] построить три группы: (1) Managed — read-only карточки, **токен маскируется**
       (`••••••`/`(set)`, секрет не показываем), подпись «редактируй в диалоге
       аккаунта / Proxy», скрыть если нет активного аккаунта; (2) AccountExtra —
       `EnvVarEditor` из `extra_env` активного, скрыть если нет активного; (3) Shared —
       `EnvVarEditor` из строковых shared-ключей; read-only shared показать
       отдельной подписью/строками
-- [ ] параметризовать заголовок/подпись `EnvVarEditor` (сейчас захардкожено
+- [x] параметризовать заголовок/подпись `EnvVarEditor` (сейчас захардкожено
       «Environment variables (optional)» / «Applied … when this account is active»)
       или подавить встроенную подпись и дать секции Shared собственный заголовок —
       иначе для shared-корзины текст вводит в заблуждение
-- [ ] обернуть панель из трёх групп во внешний `ScrollViewer` внутри контента
+- [x] обернуть панель из трёх групп во внешний `ScrollViewer` внутри контента
       `WidenDialog` (окно всего 680 dip; managed-карточки + read-only список +
       три таблицы могут не влезть по высоте)
-- [ ] кнопки Save/Cancel; диалог — снимок (читаем при открытии, применяем при Save)
-- [ ] UI-код тестами не покрывается (ограничение тест-проекта — только `Core/`);
+- [x] кнопки Save/Cancel; диалог — снимок (читаем при открытии, применяем при Save)
+- [x] UI-код тестами не покрывается (ограничение тест-проекта — только `Core/`);
       корректность обеспечивается тестами Task 1–2 и ручной проверкой
 
 ### Task 4: UI — маршрутизация Save

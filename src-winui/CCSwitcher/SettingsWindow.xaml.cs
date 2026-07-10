@@ -21,6 +21,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using CommunityToolkit.WinUI.Controls;
+using System.Text.Json.Nodes;
 using CCSwitcher.Core;
 
 namespace CCSwitcher;
@@ -893,6 +894,198 @@ public sealed partial class SettingsWindow : Window
     }
 
     // -----------------------------------------------------------------------
+    // Environment editor (settings.json env block)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Open the environment editor: a snapshot of Claude Code's <c>settings.json</c>
+    /// <c>env</c> block, classified into three buckets — Managed (read-only),
+    /// the active account's <c>extra_env</c> (editable), and Shared (editable) —
+    /// plus a read-only list of non-string shared values. The dialog is a snapshot:
+    /// the env is read once on open and applied only on Save (routing lives in the
+    /// Save handler). A corrupt <c>settings.json</c> aborts the open with an error.
+    /// </summary>
+    private async void ManageEnvBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var config = _app.GetConfig();
+        var active = config.ActiveAccountId is null
+            ? null
+            : config.Accounts.Find(a => a.Id == config.ActiveAccountId);
+
+        // Snapshot the live env on open. A corrupt settings.json must not open the
+        // editor (and nothing is written): surface a sanitized error and bail.
+        JsonObject settings;
+        EnvBuckets buckets;
+        try
+        {
+            settings = SettingsEnv.Load(ClaudePaths.SettingsPath);
+            buckets  = SettingsEnv.ClassifyEnv(settings, active);
+        }
+        catch (SettingsEnvException ex)
+        {
+            ShowError($"Cannot open environment editor: {ex.Message}");
+            return;
+        }
+
+        var panel = new StackPanel { Spacing = 18 };
+
+        // --- Group 1: Managed by ccswitcher (read-only, tokens masked) ---
+        // Hidden when there is no active account or nothing managed is present.
+        if (active != null && buckets.Managed.Count > 0)
+            panel.Children.Add(BuildManagedGroup(buckets.Managed));
+
+        // --- Group 2: Active account variables (extra_env, editable) ---
+        // Hidden when no account is active.
+        EnvVarEditor? extraEditor = null;
+        if (active != null)
+        {
+            extraEditor = new EnvVarEditor(
+                active.ExtraEnvNullable,
+                header: "Active account variables (extra_env)",
+                subtitle: $"Applied to Claude Code while \"{active.Name}\" is active. Saved to the account.");
+            panel.Children.Add(extraEditor.Root);
+        }
+
+        // --- Group 3: Shared variables (editable) + read-only non-string keys ---
+        var sharedInitial = buckets.Shared.Count > 0
+            ? buckets.Shared.ToDictionary(k => k.Key, k => k.Value, StringComparer.Ordinal)
+            : null;
+        var sharedEditor = new EnvVarEditor(
+            sharedInitial,
+            header: "Shared variables",
+            subtitle: "Shared across all logins in settings.json. Only touched when you edit here — never rewritten on account switch.");
+
+        var sharedGroup = new StackPanel { Spacing = 6 };
+        sharedGroup.Children.Add(sharedEditor.Root);
+        if (buckets.SharedReadOnlyKeys.Count > 0)
+            sharedGroup.Children.Add(BuildSharedReadOnlyNote(buckets.SharedReadOnlyKeys));
+        panel.Children.Add(sharedGroup);
+
+        // Snapshot data the Save routing (Task 4) needs, captured in this closure.
+        var oldSharedKeys = buckets.Shared.Select(k => k.Key).ToList();
+
+        // Outer scroll so the three groups fit inside the ~680 dip window.
+        var scroll = new ScrollViewer
+        {
+            Content                       = panel,
+            MaxHeight                     = 460,
+            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title             = "Environment Variables",
+            Content           = scroll,
+            PrimaryButtonText = "Save",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Primary,
+            XamlRoot          = this.Content.XamlRoot,
+        };
+        WidenDialog(dialog, scroll);
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        // TODO(Task 4): implement the Save routing here. Under App.StateMutex
+        // (released in a finally): re-read the active account from a fresh config
+        // (guards against a tray switch between open and Save); validate the
+        // collected Shared keys don't collide with SettingsEnv.ManagedKeys or the
+        // active account's extra_env keys (else ShowError, don't save/close);
+        // route AccountExtra via active.ExtraEnvNullable + ReapplyActiveEnvIfActive;
+        // route Shared via SettingsEnv.Load -> ApplySharedEnv(settings,
+        // oldSharedKeys, newShared) -> AtomicFile backup + atomic write; then
+        // App.RebuildTray() + Refresh() + ShowSuccess. The snapshot captured above
+        // (active?.Id, extraEditor, sharedEditor, oldSharedKeys) feeds that flow.
+        _ = (active, extraEditor, sharedEditor, oldSharedKeys);
+    }
+
+    /// <summary>
+    /// Build the read-only "Managed by ccswitcher" group: one row per managed env
+    /// key. Token keys (<c>ANTHROPIC_AUTH_TOKEN</c> / <c>ANTHROPIC_API_KEY</c>) are
+    /// masked — the secret value is never rendered.
+    /// </summary>
+    private static FrameworkElement BuildManagedGroup(
+        IReadOnlyList<KeyValuePair<string, string>> managed)
+    {
+        var group = new StackPanel { Spacing = 6 };
+        group.Children.Add(new TextBlock
+        {
+            Text  = "Managed by ccswitcher",
+            Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"],
+        });
+        group.Children.Add(new TextBlock
+        {
+            Text         = "Controlled by the active account and Proxy settings — edit those to change these.",
+            Opacity      = 0.7,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        foreach (var (key, value) in managed)
+        {
+            var display = IsSecretKey(key)
+                ? (string.IsNullOrEmpty(value) ? "(unset)" : "••••••")
+                : value;
+
+            var row = new Grid { ColumnSpacing = 6 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1,   GridUnitType.Star) });
+
+            var keyText = new TextBlock
+            {
+                Text              = key,
+                TextTrimming      = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var valText = new TextBlock
+            {
+                Text                   = display,
+                Opacity                = 0.7,
+                TextTrimming           = TextTrimming.CharacterEllipsis,
+                VerticalAlignment      = VerticalAlignment.Center,
+                IsTextSelectionEnabled = !IsSecretKey(key),
+            };
+            Grid.SetColumn(keyText, 0);
+            Grid.SetColumn(valText, 1);
+            row.Children.Add(keyText);
+            row.Children.Add(valText);
+            group.Children.Add(row);
+        }
+
+        return group;
+    }
+
+    /// <summary>True for the two managed env keys whose value is a secret token.</summary>
+    private static bool IsSecretKey(string key) =>
+        key is "ANTHROPIC_AUTH_TOKEN" or "ANTHROPIC_API_KEY";
+
+    /// <summary>
+    /// Build the read-only note listing shared env keys whose value is not a string
+    /// (number/array/object/null). They can't be edited in a text field, so they are
+    /// shown for visibility only and are never modified on Save.
+    /// </summary>
+    private static FrameworkElement BuildSharedReadOnlyNote(IReadOnlyList<string> keys)
+    {
+        var group = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
+        group.Children.Add(new TextBlock
+        {
+            Text         = "Read-only (non-text values, left untouched):",
+            Opacity      = 0.7,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        foreach (var key in keys)
+        {
+            group.Children.Add(new TextBlock
+            {
+                Text       = key,
+                Opacity    = 0.7,
+                FontFamily = new FontFamily("Consolas"),
+            });
+        }
+        return group;
+    }
+
+    // -----------------------------------------------------------------------
     // Launch at startup
     // -----------------------------------------------------------------------
 
@@ -955,7 +1148,10 @@ public sealed partial class SettingsWindow : Window
         /// <summary>The control to append to a dialog's content panel.</summary>
         public FrameworkElement Root { get; }
 
-        public EnvVarEditor(Dictionary<string, string>? initial)
+        public EnvVarEditor(
+            Dictionary<string, string>? initial,
+            string header = "Environment variables (optional)",
+            string subtitle = "Applied to Claude Code when this account is active.")
         {
             var addBtn = new Button
             {
@@ -988,12 +1184,12 @@ public sealed partial class SettingsWindow : Window
                 {
                     new TextBlock
                     {
-                        Text  = "Environment variables (optional)",
+                        Text  = header,
                         Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"],
                     },
                     new TextBlock
                     {
-                        Text         = "Applied to Claude Code when this account is active.",
+                        Text         = subtitle,
                         Opacity      = 0.7,
                         TextWrapping = TextWrapping.Wrap,
                     },
