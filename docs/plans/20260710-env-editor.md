@@ -187,17 +187,17 @@ public static JsonObject ApplySharedEnv(
 - Modify: `src-winui/CCSwitcher/Core/SettingsEnv.cs`
 - Modify: `src-winui/CCSwitcher.Tests/SettingsEnvTests.cs`
 
-- [ ] реализовать `public static JsonObject ApplySharedEnv(JsonObject settings,
+- [x] реализовать `public static JsonObject ApplySharedEnv(JsonObject settings,
       IEnumerable<string> oldSharedKeys, IReadOnlyDictionary<string,string> newShared)`
-- [ ] логика: взять/создать `env`; удалить `oldSharedKeys` отсутствующие в
+- [x] логика: взять/создать `env`; удалить `oldSharedKeys` отсутствующие в
       `newShared`; записать пары `newShared`; managed и `extra_env` не трогать
-- [ ] тест: добавление нового shared-ключа → появляется в `env`
-- [ ] тест: удаление (ключ в `oldSharedKeys`, нет в `newShared`) → исчезает
-- [ ] тест (Инвариант 1): managed-ключи и `extra_env`-ключи не тронуты
-- [ ] тест: read-only нестроковый ключ (не в `oldSharedKeys`) переживает вызов
-- [ ] тест: отсутствующий/непустой/не-объектный `env` → создаётся/переиспользуется
+- [x] тест: добавление нового shared-ключа → появляется в `env`
+- [x] тест: удаление (ключ в `oldSharedKeys`, нет в `newShared`) → исчезает
+- [x] тест (Инвариант 1): managed-ключи и `extra_env`-ключи не тронуты
+- [x] тест: read-only нестроковый ключ (не в `oldSharedKeys`) переживает вызов
+- [x] тест: отсутствующий/непустой/не-объектный `env` → создаётся/переиспользуется
       корректно
-- [ ] запустить тесты — должны пройти до Task 3
+- [x] запустить тесты — должны пройти до Task 3
 
 ### Task 3: UI — секция «Environment» и диалог редактора
 

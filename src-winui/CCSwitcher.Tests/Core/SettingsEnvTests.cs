@@ -523,4 +523,153 @@ public sealed class SettingsEnvTests : IDisposable
         Assert.Empty(buckets.AccountExtra);
         Assert.Single(buckets.Shared);
     }
+
+    // -----------------------------------------------------------------------
+    // ApplySharedEnv (targeted touched-only merge of the shared bucket)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void ApplySharedEnv_AddsNewSharedKey()
+    {
+        var settings = JsonNode.Parse("""{"env":{"FOO":"1"}}""")!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: new[] { "FOO" },
+            newShared: Env(("FOO", "1"), ("BAR", "2")));
+        var env = EnvOf(result);
+
+        Assert.Equal("2", env["BAR"]?.GetValue<string>());
+        Assert.Equal("1", env["FOO"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void ApplySharedEnv_RemovesDroppedSharedKey()
+    {
+        // FOO was present when the editor opened but is absent from newShared →
+        // it is a user deletion and must be removed.
+        var settings = JsonNode.Parse("""{"env":{"FOO":"1","BAR":"2"}}""")!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: new[] { "FOO", "BAR" },
+            newShared: Env(("BAR", "2")));
+        var env = EnvOf(result);
+
+        Assert.False(env.ContainsKey("FOO"));
+        Assert.Equal("2", env["BAR"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void ApplySharedEnv_UpdatesExistingSharedValue()
+    {
+        var settings = JsonNode.Parse("""{"env":{"FOO":"old"}}""")!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: new[] { "FOO" },
+            newShared: Env(("FOO", "new")));
+        var env = EnvOf(result);
+
+        Assert.Equal("new", env["FOO"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void ApplySharedEnv_Invariant1_ManagedAndExtraEnvUntouched()
+    {
+        // Managed keys (base url / token) and the active account's extra_env key
+        // (ANTHROPIC_MODEL) must survive a shared edit untouched — they are not in
+        // oldSharedKeys and not in newShared.
+        var settings = JsonNode.Parse("""
+            {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://x",
+                    "ANTHROPIC_AUTH_TOKEN": "tok",
+                    "ANTHROPIC_MODEL": "opus",
+                    "SHARED_OLD": "gone",
+                    "SHARED_KEEP": "v"
+                }
+            }
+            """)!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: new[] { "SHARED_OLD", "SHARED_KEEP" },
+            newShared: Env(("SHARED_KEEP", "v2")));
+        var env = EnvOf(result);
+
+        // Managed untouched.
+        Assert.Equal("https://x", env["ANTHROPIC_BASE_URL"]?.GetValue<string>());
+        Assert.Equal("tok", env["ANTHROPIC_AUTH_TOKEN"]?.GetValue<string>());
+        // extra_env untouched.
+        Assert.Equal("opus", env["ANTHROPIC_MODEL"]?.GetValue<string>());
+        // Shared applied.
+        Assert.False(env.ContainsKey("SHARED_OLD"));
+        Assert.Equal("v2", env["SHARED_KEEP"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void ApplySharedEnv_ReadOnlyNonStringKey_Survives()
+    {
+        // A non-string shared value (NUM) is not in oldSharedKeys (it is a
+        // read-only key), so it must not be removed by the shared merge.
+        var settings = JsonNode.Parse(
+            """{"env":{"NUM":5,"STR":"old"}}""")!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: new[] { "STR" },
+            newShared: Env(("STR", "new")));
+        var env = EnvOf(result);
+
+        Assert.Equal(5, env["NUM"]?.GetValue<int>());
+        Assert.Equal("new", env["STR"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void ApplySharedEnv_MissingEnv_CreatesEnvObject()
+    {
+        var settings = JsonNode.Parse("""{"permissions":{}}""")!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: Array.Empty<string>(),
+            newShared: Env(("FOO", "bar")));
+        var env = EnvOf(result);
+
+        Assert.Equal("bar", env["FOO"]?.GetValue<string>());
+        Assert.NotNull(result["permissions"]);
+    }
+
+    [Fact]
+    public void ApplySharedEnv_NonObjectEnv_ResetToFreshObject()
+    {
+        var settings = JsonNode.Parse("""{"env":"bad-value"}""")!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: Array.Empty<string>(),
+            newShared: Env(("FOO", "bar")));
+        var env = EnvOf(result);
+
+        Assert.Equal("bar", env["FOO"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void ApplySharedEnv_EmptyNewShared_RemovesAllOldSharedKeys()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"FOO":"1","BAR":"2","ANTHROPIC_AUTH_TOKEN":"tok"}}""")!.AsObject();
+
+        var result = SettingsEnv.ApplySharedEnv(
+            settings,
+            oldSharedKeys: new[] { "FOO", "BAR" },
+            newShared: new Dictionary<string, string>());
+        var env = EnvOf(result);
+
+        Assert.False(env.ContainsKey("FOO"));
+        Assert.False(env.ContainsKey("BAR"));
+        // Managed key still untouched.
+        Assert.Equal("tok", env["ANTHROPIC_AUTH_TOKEN"]?.GetValue<string>());
+    }
 }

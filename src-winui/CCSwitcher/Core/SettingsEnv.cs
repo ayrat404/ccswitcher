@@ -222,6 +222,62 @@ public static class SettingsEnv
     }
 
     /// <summary>
+    /// Apply user edits to the <b>shared</b> (non-managed, non-extra_env) portion
+    /// of the <c>env</c> block — the targeted, touched-only counterpart of
+    /// <see cref="MergeEnv"/>. Unlike <see cref="MergeEnv"/>, this does <b>not</b>
+    /// strip the managed union: it only removes the shared keys the user deleted
+    /// and writes back the ones they kept/added, leaving managed keys, the active
+    /// account's <c>extra_env</c> keys, and any read-only non-string shared keys
+    /// (those not in <paramref name="oldSharedKeys"/>) completely untouched.
+    /// </summary>
+    /// <param name="settings">
+    /// The full settings object loaded by <see cref="Load"/>.
+    /// </param>
+    /// <param name="oldSharedKeys">
+    /// The string-valued shared keys that were present when the editor was opened.
+    /// Any of these missing from <paramref name="newShared"/> is treated as a user
+    /// deletion and removed. Keys outside this set are never removed, so read-only
+    /// non-string shared values survive.
+    /// </param>
+    /// <param name="newShared">
+    /// The shared key/value pairs from the editor to write back.
+    /// </param>
+    /// <returns>The updated <paramref name="settings"/>.</returns>
+    public static JsonObject ApplySharedEnv(
+        JsonObject settings,
+        IEnumerable<string> oldSharedKeys,
+        IReadOnlyDictionary<string, string> newShared)
+    {
+        // Get or create the "env" child object. An absent or non-object value is
+        // reset to a fresh empty object (there are no shared keys to preserve in
+        // that case, and MergeEnv treats a non-object env the same way).
+        JsonObject envObj;
+        if (settings.TryGetPropertyValue("env", out JsonNode? envNode) &&
+            envNode is JsonObject existingEnvObj)
+        {
+            envObj = existingEnvObj;
+        }
+        else
+        {
+            envObj = new JsonObject();
+            settings["env"] = envObj;
+        }
+
+        // Remove only the previously-present shared keys the user dropped.
+        foreach (var key in oldSharedKeys)
+        {
+            if (!newShared.ContainsKey(key))
+                envObj.Remove(key);
+        }
+
+        // Write back the kept/added shared entries.
+        foreach (var (key, value) in newShared)
+            envObj[key] = JsonValue.Create(value);
+
+        return settings;
+    }
+
+    /// <summary>
     /// Capture the current values of the tracked top-level <paramref name="keys"/>
     /// from <paramref name="settings"/> into <paramref name="into"/> (a per-account
     /// snapshot). Each tracked key is always recorded so the snapshot reflects the
