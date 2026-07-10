@@ -27,6 +27,11 @@ no runtime dependency on the target machine.
 - **Per-account extra environment variables** — each account can define custom
   env vars that are applied when that account is active, editable from the
   add/edit account dialog.
+- **Environment editor** — a single view of the whole `settings.json` `env`
+  block, split into three buckets: managed keys (read-only, token masked), the
+  active account's `extra_env`, and your own "shared" keys. The account and
+  shared keys are editable in place; edits route to their proper home
+  (account config vs. a targeted `settings.json` merge) so both invariants hold.
 
 ## How switching works
 

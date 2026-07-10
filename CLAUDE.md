@@ -193,6 +193,13 @@ Add/edit account dialogs are built imperatively in code-behind as
 `ContentDialog`s (not XAML), and account rows are built in code-behind
 (`RebuildAccountList`) rather than via a DataTemplate.
 
+The `EnvVarEditor` code-behind helper (parametrized `header`/`subtitle`) is
+reused for both the account `extra_env` dialogs and the Environment editor's
+Shared bucket. The Environment editor's Save routes each bucket to its own home:
+`extra_env` changes go through `ReapplyActiveEnvIfActive`, and shared-key changes
+go through `SettingsEnv.ApplySharedEnv` — two independent writes to disjoint
+`env` regions (order-independent; a partial failure self-heals on re-Save).
+
 ### WinUI 3 (src-winui/) conventions
 
 Patterns discovered during implementation that are non-obvious:

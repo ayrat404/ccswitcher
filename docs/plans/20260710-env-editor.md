@@ -274,9 +274,12 @@ public static JsonObject ApplySharedEnv(
 
 ### Task 7: [Final] Финализация плана
 
-- [ ] обновить README.md при необходимости
-- [ ] обновить CLAUDE.md если найдены новые паттерны (сверх Task 5)
-- [ ] переместить план в `docs/plans/completed/`
+- [x] обновить README.md при необходимости — добавлен bullet «Environment
+      editor» в секцию Features
+- [x] обновить CLAUDE.md если найдены новые паттерны (сверх Task 5) — добавлен
+      bullet о переиспользовании `EnvVarEditor` (параметризованный header/subtitle)
+      и two-write Save routing (`ReapplyActiveEnvIfActive` + `ApplySharedEnv`)
+- [x] переместить план в `docs/plans/completed/` (moved by orchestrator at completion)
 
 ## Post-Completion
 
