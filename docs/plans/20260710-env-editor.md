@@ -265,12 +265,12 @@ public static JsonObject ApplySharedEnv(
 
 ### Task 6: Verify acceptance criteria
 
-- [ ] проверить, что все требования из Overview реализованы
-- [ ] проверить крайние случаи (нет активного аккаунта; битый JSON; нестроковые
+- [x] проверить, что все требования из Overview реализованы
+- [x] проверить крайние случаи (нет активного аккаунта; битый JSON; нестроковые
       shared; коллизия имён с managed)
-- [ ] полный прогон: `cd src-winui && dotnet test CCSwitcher.Tests/CCSwitcher.Tests.csproj`
-- [ ] сборка: `cd src-winui && dotnet build CCSwitcher.sln`
-- [ ] e2e в проекте нет — отметить как N/A
+- [x] полный прогон: `cd src-winui && dotnet test CCSwitcher.Tests/CCSwitcher.Tests.csproj` — 244 passed, 0 failed
+- [x] сборка: `cd src-winui && dotnet build CCSwitcher.sln` — 0 errors, 0 warnings
+- [x] e2e в проекте нет — N/A (нет UI e2e-фреймворка для WinUI 3 tray-app)
 
 ### Task 7: [Final] Финализация плана
 
