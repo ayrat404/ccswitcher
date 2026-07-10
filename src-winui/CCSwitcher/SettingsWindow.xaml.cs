@@ -548,6 +548,23 @@ public sealed partial class SettingsWindow : Window
                 _app.GetSecretStore(),
                 ClaudePaths.AppConfigDir);
 
+            // If the edited account is the active one, re-apply its env to
+            // settings.json so the edit (base_url, extra_env, …) takes effect
+            // immediately instead of only on the next switch. Reapply is a no-op
+            // for non-active accounts.
+            if (config.ActiveAccountId == account.Id)
+            {
+                Switcher.ReapplyActiveAccountEnv(
+                    config,
+                    account.Id,
+                    new ProxyDeps
+                    {
+                        SettingsPath = ClaudePaths.SettingsPath,
+                        ConfigDir    = ClaudePaths.AppConfigDir,
+                        SecretStore  = _app.GetSecretStore(),
+                    });
+            }
+
             _app.RebuildTray();
             Refresh();
             ShowSuccess("Account updated.");

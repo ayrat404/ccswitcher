@@ -326,4 +326,62 @@ public sealed class SettingsEnvTests : IDisposable
         SettingsEnv.RestoreSettings(settings, new JsonObject(), new[] { "model" });
         Assert.Equal("opus", settings["model"]?.GetValue<string>());
     }
+
+    // -----------------------------------------------------------------------
+    // CaptureExtraEnv (live extra_env values read back from settings env)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void CaptureExtraEnv_ReadsLiveValuesForRequestedKeys()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"ANTHROPIC_MODEL":"opus","ANTHROPIC_SMALL_FAST_MODEL":"haiku","OTHER":"x"}}""")!.AsObject();
+
+        var captured = SettingsEnv.CaptureExtraEnv(
+            settings, new[] { "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL" });
+
+        Assert.Equal(2, captured.Count);
+        Assert.Equal("opus", captured["ANTHROPIC_MODEL"]);
+        Assert.Equal("haiku", captured["ANTHROPIC_SMALL_FAST_MODEL"]);
+        // Keys not requested are ignored.
+        Assert.DoesNotContain("OTHER", captured.Keys);
+    }
+
+    [Fact]
+    public void CaptureExtraEnv_DropsAbsentKey()
+    {
+        // A manually-deleted key (absent from env) is dropped, not kept stale.
+        var settings = JsonNode.Parse(
+            """{"env":{"ANTHROPIC_MODEL":"opus"}}""")!.AsObject();
+
+        var captured = SettingsEnv.CaptureExtraEnv(
+            settings, new[] { "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL" });
+
+        Assert.Single(captured);
+        Assert.Equal("opus", captured["ANTHROPIC_MODEL"]);
+        Assert.DoesNotContain("ANTHROPIC_SMALL_FAST_MODEL", captured.Keys);
+    }
+
+    [Fact]
+    public void CaptureExtraEnv_SkipsEmptyAndNonString()
+    {
+        var settings = JsonNode.Parse(
+            """{"env":{"KEEP":"v","EMPTY":"","NUM":5,"NULLED":null}}""")!.AsObject();
+
+        var captured = SettingsEnv.CaptureExtraEnv(
+            settings, new[] { "KEEP", "EMPTY", "NUM", "NULLED", "MISSING" });
+
+        Assert.Single(captured);
+        Assert.Equal("v", captured["KEEP"]);
+    }
+
+    [Fact]
+    public void CaptureExtraEnv_NoEnvObject_ReturnsEmpty()
+    {
+        var settings = JsonNode.Parse("""{"permissions":{}}""")!.AsObject();
+
+        var captured = SettingsEnv.CaptureExtraEnv(settings, new[] { "ANTHROPIC_MODEL" });
+
+        Assert.Empty(captured);
+    }
 }

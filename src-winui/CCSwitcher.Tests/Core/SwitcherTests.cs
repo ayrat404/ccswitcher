@@ -77,6 +77,17 @@ public sealed class SwitcherTests : IDisposable
     };
 
     /// <summary>
+    /// Lighter deps (no credential store) for <see cref="ProxyDeps"/>-based ops
+    /// like <see cref="Switcher.ReapplyActiveAccountEnv"/>.
+    /// </summary>
+    private ProxyDeps DepsProxy() => new()
+    {
+        SettingsPath = _settingsPath,
+        ConfigDir    = _configDir,
+        SecretStore  = _secrets,
+    };
+
+    /// <summary>
     /// Read settings.json and return the "env" object (or null if absent).
     /// </summary>
     private JsonObject? SettingsEnvObj()
@@ -340,6 +351,66 @@ public sealed class SwitcherTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
+    // 5d. extra_env capture-on-switch-out (manual model edit is saved)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Switch_CapturesOutgoingExtraEnv_FromLiveSettings()
+    {
+        // Account A is active and owns ANTHROPIC_MODEL in its extra_env. The user
+        // has hand-edited the live settings.json value to a new model; that edit
+        // must be captured back into A's extra_env on switch-out, so it survives a
+        // later switch back to A. The managed token key is NOT pulled in.
+        File.WriteAllText(_settingsPath,
+            """{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-a","ANTHROPIC_MODEL":"claude-hand-edited"}}""");
+        _secrets.Set("a", "sk-a");
+        _secrets.Set("b", "sk-b");
+
+        var a = TokenAccount("a");
+        a.ExtraEnvNullable = new Dictionary<string, string>
+        {
+            ["ANTHROPIC_MODEL"] = "claude-original",
+        };
+        var b = TokenAccount("b");
+        var cfg = ConfigWith(a, b);
+        cfg.ActiveAccountId = "a";
+        cfg.ManagedKeys = new List<string> { "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL" };
+
+        Switcher.ApplyAccount(cfg, "b", Deps());
+
+        // A's extra_env now reflects the live (hand-edited) model value only.
+        Assert.NotNull(a.ExtraEnvNullable);
+        Assert.Single(a.ExtraEnvNullable);
+        Assert.Equal("claude-hand-edited", a.ExtraEnvNullable["ANTHROPIC_MODEL"]);
+        Assert.DoesNotContain("ANTHROPIC_AUTH_TOKEN", a.ExtraEnvNullable.Keys);
+
+        // The captured value is persisted to config.json.
+        var reloaded = ConfigStore.Load(_configDir);
+        var reloadedA = reloaded.Accounts.Single(x => x.Id == "a");
+        Assert.Equal("claude-hand-edited", reloadedA.ExtraEnv["ANTHROPIC_MODEL"]);
+    }
+
+    [Fact]
+    public void Switch_NoCapture_WhenOutgoingHasNoExtraEnv()
+    {
+        // Outgoing account has no extra_env → nothing to capture, no crash, and
+        // managed keys are never pulled into extra_env.
+        File.WriteAllText(_settingsPath, """{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-a"}}""");
+        _secrets.Set("a", "sk-a");
+        _secrets.Set("b", "sk-b");
+
+        var a = TokenAccount("a"); // no extra_env
+        var b = TokenAccount("b");
+        var cfg = ConfigWith(a, b);
+        cfg.ActiveAccountId = "a";
+        cfg.ManagedKeys = new List<string> { "ANTHROPIC_AUTH_TOKEN" };
+
+        Switcher.ApplyAccount(cfg, "b", Deps());
+
+        Assert.Null(a.ExtraEnvNullable);
+    }
+
+    // -----------------------------------------------------------------------
     // 6. oauth_account_with_base_url_keeps_it_after_switch
     // -----------------------------------------------------------------------
 
@@ -481,6 +552,92 @@ public sealed class SwitcherTests : IDisposable
         Assert.Equal("B", afterNode["oauthAccount"]?["accountUuid"]?.GetValue<string>());
         // Other fields preserved.
         Assert.Equal("keep-me", afterNode["userID"]?.GetValue<string>());
+    }
+
+    // -----------------------------------------------------------------------
+    // 13. ReapplyActiveAccountEnv (in-app edit of active account applies live)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void ReapplyActiveAccountEnv_WritesEditedExtraEnv_ToSettings()
+    {
+        // Active account A owns ANTHROPIC_MODEL. After an in-app edit changes its
+        // value, re-apply must write the new value into settings.json immediately
+        // — without capture-on-switch-out clobbering the edit.
+        File.WriteAllText(_settingsPath,
+            """{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-a","ANTHROPIC_MODEL":"old"}}""");
+        _secrets.Set("a", "sk-a");
+
+        var a = TokenAccount("a");
+        a.ExtraEnvNullable = new Dictionary<string, string> { ["ANTHROPIC_MODEL"] = "old" };
+        var cfg = ConfigWith(a);
+        cfg.ActiveAccountId = "a";
+        cfg.ManagedKeys = new List<string> { "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL" };
+
+        // Simulate the in-app edit: new model value.
+        a.ExtraEnvNullable = new Dictionary<string, string> { ["ANTHROPIC_MODEL"] = "new-from-edit" };
+
+        Switcher.ReapplyActiveAccountEnv(cfg, "a", DepsProxy());
+
+        var env = SettingsEnvObj();
+        Assert.NotNull(env);
+        Assert.Equal("new-from-edit", env["ANTHROPIC_MODEL"]?.GetValue<string>());
+        Assert.Equal("sk-a", env["ANTHROPIC_AUTH_TOKEN"]?.GetValue<string>()); // untouched
+        Assert.Equal("a", cfg.ActiveAccountId); // active id unchanged (no switch)
+    }
+
+    [Fact]
+    public void ReapplyActiveAccountEnv_AddsRemovesKeys_AndUpdatesManagedKeys()
+    {
+        File.WriteAllText(_settingsPath,
+            """{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-a","ANTHROPIC_MODEL":"m","STALE":"x"}}""");
+        _secrets.Set("a", "sk-a");
+
+        var a = TokenAccount("a");
+        a.ExtraEnvNullable = new Dictionary<string, string> { ["ANTHROPIC_MODEL"] = "m" };
+        var cfg = ConfigWith(a);
+        cfg.ActiveAccountId = "a";
+        cfg.ManagedKeys = new List<string> { "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "STALE" };
+
+        // Edit: drop ANTHROPIC_MODEL, add ANTHROPIC_SMALL_FAST_MODEL.
+        a.ExtraEnvNullable = new Dictionary<string, string> { ["ANTHROPIC_SMALL_FAST_MODEL"] = "haiku" };
+
+        Switcher.ReapplyActiveAccountEnv(cfg, "a", DepsProxy());
+
+        var env = SettingsEnvObj();
+        Assert.NotNull(env);
+        Assert.False(env.ContainsKey("ANTHROPIC_MODEL")); // removed
+        Assert.False(env.ContainsKey("STALE"));           // was managed, now stripped
+        Assert.Equal("haiku", env["ANTHROPIC_SMALL_FAST_MODEL"]?.GetValue<string>());
+
+        // managed_keys tracks the new footprint, persisted too.
+        Assert.Contains("ANTHROPIC_SMALL_FAST_MODEL", cfg.ManagedKeys);
+        Assert.DoesNotContain("STALE", cfg.ManagedKeys);
+        Assert.DoesNotContain("ANTHROPIC_MODEL", cfg.ManagedKeys);
+        var reloaded = ConfigStore.Load(_configDir);
+        Assert.Contains("ANTHROPIC_SMALL_FAST_MODEL", reloaded.ManagedKeys);
+    }
+
+    [Fact]
+    public void ReapplyActiveAccountEnv_Noop_WhenAccountNotActive()
+    {
+        // Editing a non-active account must not touch settings.json.
+        File.WriteAllText(_settingsPath, """{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-active"}}""");
+        _secrets.Set("active", "sk-active");
+        _secrets.Set("other", "sk-other");
+
+        var active = TokenAccount("active");
+        var other = TokenAccount("other");
+        other.ExtraEnvNullable = new Dictionary<string, string> { ["ANTHROPIC_MODEL"] = "x" };
+        var cfg = ConfigWith(active, other);
+        cfg.ActiveAccountId = "active";
+
+        Switcher.ReapplyActiveAccountEnv(cfg, "other", DepsProxy());
+
+        var env = SettingsEnvObj();
+        Assert.NotNull(env);
+        Assert.False(env.ContainsKey("ANTHROPIC_MODEL"));
+        Assert.Equal("sk-active", env["ANTHROPIC_AUTH_TOKEN"]?.GetValue<string>());
     }
 
     // -----------------------------------------------------------------------

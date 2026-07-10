@@ -119,12 +119,15 @@ public sealed class Account
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Identity { get; init; }
 
-    /// <summary>Extra environment variables applied on switch.
+    /// <summary>Extra environment variables applied on switch. Values are written
+    /// to <c>settings.json</c>'s env on switch-in and re-captured from the live
+    /// env on switch-out, so manual edits to these keys persist into the account.
     /// Stored as null when empty so the JSON field is omitted (WhenWritingNull).
-    /// Use <see cref="ExtraEnvSafe"/> to get a non-null view.</summary>
+    /// Settable (not init-only) so the switch engine can capture live values back
+    /// into the account. Use <see cref="ExtraEnv"/> to get a non-null view.</summary>
     [JsonPropertyName("extra_env")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public Dictionary<string, string>? ExtraEnvNullable { get; init; }
+    public Dictionary<string, string>? ExtraEnvNullable { get; set; }
 
     /// <summary>Non-null view of ExtraEnv; empty dict when not set.</summary>
     [JsonIgnore]

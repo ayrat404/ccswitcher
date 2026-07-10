@@ -93,7 +93,7 @@ Serialization rules:
 | `base_url`      | string (optional)          | both       | Written as `ANTHROPIC_BASE_URL` when present. Omitted when null. |
 | `auth_kind`     | `"auth_token"` \| `"api_key"` (optional) | token only | Which env var the secret goes into. Omitted for OAuth. |
 | `identity`      | string (optional)          | oauth only | Stable identity (email / accountUuid) for dedup. Omitted when null. |
-| `extra_env`     | object<string,string> (optional) | both | Extra env vars applied on switch. **Omitted entirely when empty.** |
+| `extra_env`     | object<string,string> (optional) | both | Extra env vars applied on switch-in and **re-captured from the live `settings.json` env on switch-out** (so manual edits to these keys persist into the account). **Omitted entirely when empty.** |
 | `saved_settings`| object (optional)          | both       | Per-account snapshot of `tracked_settings_keys` values. Omitted when null. |
 
 ### 3.3 ProxySettings
@@ -158,7 +158,9 @@ earlier ones.
 4. **Proxy:** if `proxy.enabled`, set `HTTP_PROXY = proxy.url`,
    `HTTPS_PROXY = proxy.url`, `NO_PROXY = proxy.no_proxy`.
 5. **extra_env (merged last):** copy every `extra_env` entry in. This **may add
-   arbitrary keys or override any of the above** (including managed keys).
+   arbitrary keys or override any of the above** (including managed keys). These
+   values are re-captured from the live env on switch-out (see [§7 step 4](#7-switch-flow-the-8-steps)),
+   so `extra_env` is read-write, not write-only.
 
 ---
 
@@ -230,10 +232,21 @@ aborted run.
    This is what makes a same-account re-switch idempotent. (Do **not** gate this
    on `active_id != target_id`.)
 3. **Load** `settings.json`. Invalid JSON → abort **before any mutation**.
-4. **Capture tracked settings of the outgoing account:** snapshot the live
-   values of `tracked_settings_keys` (e.g. `model`) from `settings.json` into the
-   *outgoing* account's `saved_settings` (persisted in step 8). Per-key tri-state:
-   present→store deep clone; absent/null→store JSON `null` (means "default").
+4. **Capture the outgoing account's live state into its own record**
+   (persisted in step 8):
+   - **Tracked settings:** snapshot the live values of `tracked_settings_keys`
+     (e.g. top-level `model`) from `settings.json` into the *outgoing* account's
+     `saved_settings`. Per-key tri-state: present→store deep clone;
+     absent/null→store JSON `null` (means "default").
+   - **`extra_env`:** re-read the live values of the outgoing account's **own**
+     `extra_env` keys from `settings.json`'s `env` back into its `extra_env`, so
+     manual edits the user made to those keys (e.g. `ANTHROPIC_*_MODEL` values)
+     are saved on switch-out instead of being silently overwritten on the next
+     switch. Per key: present & non-empty string→overwrite; absent / empty /
+     non-string→drop the key (a manual deletion is respected). Only the
+     account's own `extra_env` keys are read back; the constant managed keys
+     (token, `base_url`, proxy) are owned by ccswitcher and are **never**
+     captured here.
 5. **Build target env** ([§4](#4-env-build-rules-per-account)). Missing token
    secret → abort **before any settings write**.
 6. **Merge env:** in `settings.json`'s `env` object, remove the **union** of the
@@ -262,6 +275,17 @@ aborted run.
 On startup (or before a switch), if `active_account_id` refers to an account
 that no longer exists, clear it to `null` so it can't trigger a spurious
 capture-on-switch-out.
+
+### Editing the active account in-app re-applies its env
+When an account is edited in-app (`name`, `base_url`, `auth_kind`, secret, or
+`extra_env`) **and** it is the currently-active account, ccswitcher re-applies
+that account's env to `settings.json` immediately — a "lighter than a switch"
+re-apply (`Switcher.ReapplyActiveAccountEnv`) that performs **no**
+capture-on-switch-out and **no** credential-store I/O (it cannot reuse
+`ApplyAccount`, whose capture-on-switch-out would read the stale pre-edit values
+and clobber the edit). So the edit takes effect at once rather than only on the
+next switch. Editing a **non-active** account updates only its stored definition
+and never touches `settings.json`.
 
 ---
 

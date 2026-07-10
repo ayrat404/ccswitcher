@@ -167,6 +167,43 @@ public static class SettingsEnv
     }
 
     /// <summary>
+    /// Re-read the live values of <paramref name="keys"/> from the <c>env</c>
+    /// object of <paramref name="settings"/> and return them as a fresh map — the
+    /// <see cref="ExtraEnv"/> analogue of <see cref="CaptureSettings"/>. This lets
+    /// manual edits the user made to an account's env keys (e.g.
+    /// <c>ANTHROPIC_*_MODEL</c> values) be saved back into the account on
+    /// switch-out, instead of being silently overwritten on the next switch.
+    /// <para>
+    /// Per key: present &amp; non-empty string → included with the live value;
+    /// absent, empty, or non-string → dropped (so a manual deletion of the key is
+    /// respected rather than re-instated from a stale stored value). Only the
+    /// <c>env</c> object is read; nothing else in <paramref name="settings"/> is
+    /// touched.
+    /// </para>
+    /// </summary>
+    public static Dictionary<string, string> CaptureExtraEnv(
+        JsonObject settings,
+        IEnumerable<string> keys)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        JsonObject? envObj = null;
+        if (settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject eo)
+            envObj = eo;
+
+        foreach (var key in keys)
+        {
+            if (envObj is null
+                || !envObj.TryGetPropertyValue(key, out var node))
+                continue;
+            if (node is JsonValue val && val.TryGetValue<string>(out var s) && !string.IsNullOrEmpty(s))
+                result[key] = s;
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Restore the tracked top-level <paramref name="keys"/> into
     /// <paramref name="settings"/> from a per-account snapshot
     /// <paramref name="saved"/>. Tri-state per key:

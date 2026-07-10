@@ -193,6 +193,24 @@ public static class Switcher
             }
         }
 
+        // --- Step 3c: capture extra_env of the OUTGOING account -------------
+        // Re-read the live values of the outgoing account's OWN extra_env keys
+        // from settings.json back into the account, so manual edits the user made
+        // to those keys (e.g. ANTHROPIC_*_MODEL values) are saved on switch-out
+        // instead of being silently overwritten on the next switch. Only the
+        // account's own extra_env keys are read back; the constant managed keys
+        // (token, base_url, proxy) are owned by ccswitcher and never captured.
+        if (activeId != null)
+        {
+            var outgoing = config.Accounts.Find(a => a.Id == activeId);
+            if (outgoing != null && outgoing.ExtraEnvNullable is { Count: > 0 })
+            {
+                var captured = SettingsEnv.CaptureExtraEnv(
+                    settings, outgoing.ExtraEnv.Keys);
+                outgoing.ExtraEnvNullable = captured.Count > 0 ? captured : null;
+            }
+        }
+
         // --- Step 4: build target env (missing secret aborts before any write) --
         // For token accounts fetch the secret from the keyring; OAuth accounts
         // do not need a secret to build env.
@@ -282,6 +300,110 @@ public static class Switcher
         {
             throw new SwitchException($"failed to persist config.json: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Re-apply the active account's env to <c>settings.json</c> after its
+    /// definition (<c>base_url</c>, <c>auth_kind</c>, secret, or
+    /// <c>extra_env</c>) was edited in place — so an in-app edit of the active
+    /// account takes effect immediately instead of only on the next switch.
+    /// <para>
+    /// This is the "lighter than a switch" companion to
+    /// <see cref="ApplyAccount"/>: it rewrites the active account's env from its
+    /// <em>current</em> definition, but performs <b>no</b> capture-on-switch-out
+    /// and <b>no</b> OAuth credential-store I/O. (A full
+    /// <see cref="ApplyAccount"/> would be wrong here: its capture-on-switch-out
+    /// step reads the live — i.e. still pre-edit — values back into the account
+    /// and would clobber the very edit we just made.)
+    /// </para>
+    /// <para>
+    /// Reuses <see cref="ProxyDeps"/> for the same reason <see cref="Proxy"/>
+    /// does: its shape (settings path, config dir, secret store — and <b>no</b>
+    /// credential store) makes the "no credential I/O" guarantee structural.
+    /// </para>
+    /// <para>
+    /// No-op when <paramref name="accountId"/> is not the active account: editing
+    /// a non-active account must not touch <c>settings.json</c>.
+    /// </para>
+    /// </summary>
+    /// <param name="config">Current app config (mutated in-place:
+    /// <c>ManagedKeys</c> on a settings write, then persisted).</param>
+    /// <param name="accountId">The account that was just edited.</param>
+    /// <param name="deps">I/O dependencies (no credential store — by design).</param>
+    /// <exception cref="SwitchException">
+    /// Settings load or write failed, or the active token account is missing its
+    /// secret. The account's config is already updated by the caller; on failure
+    /// <c>settings.json</c> keeps reflecting the old definition until the next
+    /// switch, which is recoverable.
+    /// </exception>
+    public static void ReapplyActiveAccountEnv(AppConfig config, string accountId, ProxyDeps deps)
+    {
+        // Only the active account's env is live in settings.json. Editing a
+        // non-active account changes only its stored definition.
+        if (config.ActiveAccountId != accountId)
+            return;
+
+        var active = config.Accounts.Find(a => a.Id == accountId);
+        if (active is null)
+            return; // defensive: account vanished; nothing to reapply.
+
+        // Load settings (invalid JSON aborts before any mutation).
+        JsonObject settings;
+        try
+        {
+            settings = SettingsEnv.Load(deps.SettingsPath);
+        }
+        catch (SettingsEnvException ex)
+        {
+            throw new SwitchException($"failed to load settings.json: {ex.Message}", ex);
+        }
+
+        // Rebuild env from the account's CURRENT (post-edit) definition.
+        string? secret = active.AccountType == AccountType.Token
+            ? deps.SecretStore.Get(accountId)
+            : null;
+
+        Dictionary<string, string> newEnv;
+        try
+        {
+            newEnv = EnvBuilder.Build(active, secret, config.Proxy);
+        }
+        catch (MissingSecretException ex)
+        {
+            throw new SwitchException(
+                $"active token account is missing its secret: {ex.Message}", ex);
+        }
+
+        // Merge (strip union of MANAGED_KEYS + stored keys, insert new env).
+        var (mergedSettings, newManagedKeys) =
+            SettingsEnv.MergeEnv(settings, config.ManagedKeys, newEnv);
+
+        // Timestamped backup + atomic write.
+        var settingsBackupsDir = Path.Combine(
+            Path.GetDirectoryName(deps.SettingsPath) ?? ".", "backups");
+        try
+        {
+            AtomicFile.Backup(deps.SettingsPath, settingsBackupsDir);
+        }
+        catch (IOException ex)
+        {
+            throw new SwitchException($"failed to back up settings.json: {ex.Message}", ex);
+        }
+
+        var settingsJson = mergedSettings.ToJsonString(
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        try
+        {
+            AtomicFile.Write(deps.SettingsPath, settingsJson);
+        }
+        catch (IOException ex)
+        {
+            throw new SwitchException($"failed to write settings.json: {ex.Message}", ex);
+        }
+
+        // managed_keys may have changed (added/removed extra_env keys); persist.
+        config.ManagedKeys = newManagedKeys;
+        ConfigStore.Save(deps.ConfigDir, config);
     }
 
     /// <summary>
