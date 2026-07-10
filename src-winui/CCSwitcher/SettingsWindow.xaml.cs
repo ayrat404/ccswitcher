@@ -459,6 +459,12 @@ public sealed partial class SettingsWindow : Window
                     ClaudePaths.AppConfigDir);
             }
 
+            // If an EXISTING account was edited and it is the active one,
+            // re-apply its env to settings.json so the edit takes effect
+            // immediately. (Skipped on add — a brand-new account isn't active.)
+            if (isEdit)
+                ReapplyActiveEnvIfActive(config, editingAccount!.Id);
+
             _app.RebuildTray();
             Refresh();
             ShowSuccess(isEdit ? "Account updated." : "Account added.");
@@ -471,6 +477,29 @@ public sealed partial class SettingsWindow : Window
         {
             App.StateMutex.Release();
         }
+    }
+
+    /// <summary>
+    /// Re-apply the given account's env to settings.json if it is the currently
+    /// active account, so an in-app edit (name, base_url, auth_kind, secret, or
+    /// extra_env) takes effect immediately instead of only on the next switch.
+    /// No-op when the account is not active (e.g. a freshly-added account, or
+    /// editing a non-active account).
+    /// </summary>
+    private void ReapplyActiveEnvIfActive(AppConfig config, string accountId)
+    {
+        if (config.ActiveAccountId != accountId)
+            return;
+
+        Switcher.ReapplyActiveAccountEnv(
+            config,
+            accountId,
+            new ProxyDeps
+            {
+                SettingsPath = ClaudePaths.SettingsPath,
+                ConfigDir    = ClaudePaths.AppConfigDir,
+                SecretStore  = _app.GetSecretStore(),
+            });
     }
 
     // -----------------------------------------------------------------------
@@ -550,20 +579,8 @@ public sealed partial class SettingsWindow : Window
 
             // If the edited account is the active one, re-apply its env to
             // settings.json so the edit (base_url, extra_env, …) takes effect
-            // immediately instead of only on the next switch. Reapply is a no-op
-            // for non-active accounts.
-            if (config.ActiveAccountId == account.Id)
-            {
-                Switcher.ReapplyActiveAccountEnv(
-                    config,
-                    account.Id,
-                    new ProxyDeps
-                    {
-                        SettingsPath = ClaudePaths.SettingsPath,
-                        ConfigDir    = ClaudePaths.AppConfigDir,
-                        SecretStore  = _app.GetSecretStore(),
-                    });
-            }
+            // immediately instead of only on the next switch. No-op otherwise.
+            ReapplyActiveEnvIfActive(config, account.Id);
 
             _app.RebuildTray();
             Refresh();
