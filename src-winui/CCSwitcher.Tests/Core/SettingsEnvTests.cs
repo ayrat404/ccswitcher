@@ -510,6 +510,75 @@ public sealed class SettingsEnvTests : IDisposable
     }
 
     [Fact]
+    public void ClassifyEnv_AllManagedKeys_EmittedInFixedOrder()
+    {
+        // All six managed keys present (declared here out of canonical order) plus a
+        // shared key. The Managed bucket must contain exactly the six, in the
+        // canonical order — never HashSet enumeration order.
+        var settings = JsonNode.Parse("""
+            {
+                "env": {
+                    "NO_PROXY": "localhost",
+                    "ANTHROPIC_API_KEY": "key",
+                    "SHARED": "x",
+                    "HTTPS_PROXY": "https://p",
+                    "ANTHROPIC_BASE_URL": "https://b",
+                    "HTTP_PROXY": "http://p",
+                    "ANTHROPIC_AUTH_TOKEN": "tok"
+                }
+            }
+            """)!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Equal(
+            new[]
+            {
+                "ANTHROPIC_BASE_URL",
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_API_KEY",
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "NO_PROXY",
+            },
+            buckets.Managed.Select(kv => kv.Key).ToArray());
+        Assert.Single(buckets.Shared);
+        Assert.Contains(new KeyValuePair<string, string>("SHARED", "x"), buckets.Shared);
+    }
+
+    [Fact]
+    public void ClassifyEnv_AccountExtra_PreservesFileOrder()
+    {
+        // extra_env declares keys in one order; the live env lists them in another.
+        // AccountExtra must follow the file (env) order, not the extra_env order.
+        var settings = JsonNode.Parse(
+            """{"env":{"B_MODEL":"2","A_MODEL":"1","C_MODEL":"3"}}""")!.AsObject();
+        var active = AccountWithExtra(
+            ("A_MODEL", "1"), ("B_MODEL", "2"), ("C_MODEL", "3"));
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active);
+
+        Assert.Equal(
+            new[] { "B_MODEL", "A_MODEL", "C_MODEL" },
+            buckets.AccountExtra.Select(kv => kv.Key).ToArray());
+    }
+
+    [Fact]
+    public void ClassifyEnv_ManagedNonStringValue_CoercedToJsonText()
+    {
+        // A managed key with a non-string value must still land in Managed, coerced
+        // to its JSON text via NodeToString (managed values are always rendered).
+        var settings = JsonNode.Parse(
+            """{"env":{"ANTHROPIC_BASE_URL":5}}""")!.AsObject();
+
+        var buckets = SettingsEnv.ClassifyEnv(settings, active: null);
+
+        Assert.Contains(
+            new KeyValuePair<string, string>("ANTHROPIC_BASE_URL", "5"),
+            buckets.Managed);
+    }
+
+    [Fact]
     public void ClassifyEnv_ExtraEnvKeyAbsentFromEnv_NotEmitted()
     {
         // extra_env declares a key that is not present in the live env → it is
@@ -671,5 +740,70 @@ public sealed class SettingsEnvTests : IDisposable
         Assert.False(env.ContainsKey("BAR"));
         // Managed key still untouched.
         Assert.Equal("tok", env["ANTHROPIC_AUTH_TOKEN"]?.GetValue<string>());
+    }
+
+    // -----------------------------------------------------------------------
+    // SaveShared (load → ApplySharedEnv → backup → atomic write)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void SaveShared_WritesNewShared_RemovesDropped_LeavesRestUntouched()
+    {
+        // A file with managed, extra_env, read-only non-string, and shared keys.
+        var path = SettingsPath();
+        File.WriteAllText(path, """
+            {
+                "permissions": { "allow": ["x"] },
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "tok",
+                    "ANTHROPIC_MODEL": "opus",
+                    "NUM": 5,
+                    "SHARED_OLD": "gone",
+                    "SHARED_KEEP": "v"
+                }
+            }
+            """);
+
+        // removalKeys is the final set the caller computes (dropped shared keys,
+        // already filtered of managed / active extra_env); newShared is the survivors.
+        SettingsEnv.SaveShared(
+            path,
+            removalKeys: new[] { "SHARED_OLD" },
+            newShared: Env(("SHARED_KEEP", "v2"), ("SHARED_NEW", "n")));
+
+        var written = SettingsEnv.Load(path);
+        var env = EnvOf(written);
+
+        // Shared edits applied.
+        Assert.False(env.ContainsKey("SHARED_OLD"));
+        Assert.Equal("v2", env["SHARED_KEEP"]?.GetValue<string>());
+        Assert.Equal("n", env["SHARED_NEW"]?.GetValue<string>());
+        // Invariant 1: managed / extra_env / read-only non-string all untouched.
+        Assert.Equal("tok", env["ANTHROPIC_AUTH_TOKEN"]?.GetValue<string>());
+        Assert.Equal("opus", env["ANTHROPIC_MODEL"]?.GetValue<string>());
+        Assert.Equal(5, env["NUM"]?.GetValue<int>());
+        // Non-env settings untouched.
+        Assert.NotNull(written["permissions"]);
+    }
+
+    [Fact]
+    public void SaveShared_CreatesTimestampedBackupOfPriorFile()
+    {
+        var path = SettingsPath();
+        File.WriteAllText(path, """{"env":{"FOO":"1"}}""");
+
+        SettingsEnv.SaveShared(
+            path,
+            removalKeys: Array.Empty<string>(),
+            newShared: Env(("FOO", "2")));
+
+        var backupsDir = Path.Combine(_dir, "backups");
+        Assert.True(Directory.Exists(backupsDir));
+        var backups = Directory.GetFiles(backupsDir, "settings.json.*.bak");
+        Assert.Single(backups);
+        // The backup holds the pre-write content.
+        Assert.Contains("\"1\"", File.ReadAllText(backups[0]));
+        // The live file holds the new content.
+        Assert.Equal("2", EnvOf(SettingsEnv.Load(path))["FOO"]?.GetValue<string>());
     }
 }

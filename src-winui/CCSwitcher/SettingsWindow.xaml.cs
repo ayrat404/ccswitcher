@@ -947,11 +947,14 @@ public sealed partial class SettingsWindow : Window
         }
 
         // --- Group 3: Shared variables (editable) + read-only non-string keys ---
-        var sharedInitial = buckets.Shared.Count > 0
-            ? buckets.Shared.ToDictionary(k => k.Key, k => k.Value, StringComparer.Ordinal)
-            : null;
+        // Snapshot the shared bucket once (EnvVarEditor treats null and empty the
+        // same). This same map feeds the editor's initial rows and the Save
+        // routing: the full key/value map lets Save detect value-only edits (not
+        // just added/removed keys) and supplies ApplySharedEnv's old-key set.
+        var oldShared = buckets.Shared.ToDictionary(
+            k => k.Key, k => k.Value, StringComparer.Ordinal);
         var sharedEditor = new EnvVarEditor(
-            sharedInitial,
+            oldShared,
             header: "Shared variables",
             subtitle: "Shared across all logins in settings.json. Only touched when you edit here — never rewritten on account switch.");
 
@@ -961,11 +964,12 @@ public sealed partial class SettingsWindow : Window
             sharedGroup.Children.Add(BuildSharedReadOnlyNote(buckets.SharedReadOnlyKeys));
         panel.Children.Add(sharedGroup);
 
-        // Snapshot data the Save routing needs, captured in this closure. The full
-        // key/value map lets Save detect value-only edits (not just added/removed
-        // keys) and feeds ApplySharedEnv's old-key set.
-        var oldShared = buckets.Shared.ToDictionary(
-            k => k.Key, k => k.Value, StringComparer.Ordinal);
+        // Names a Shared key must never collide with: managed keys, the active
+        // account's extra_env keys, and read-only non-string shared keys (typing
+        // one of these in the free-text Shared editor would overwrite a value the
+        // editor is not allowed to own). Used by the Save-time validation below.
+        var readOnlyKeys = new HashSet<string>(
+            buckets.SharedReadOnlyKeys, StringComparer.Ordinal);
 
         // Outer scroll so the three groups fit inside the ~680 dip window.
         var scroll = new ScrollViewer
@@ -975,6 +979,18 @@ public sealed partial class SettingsWindow : Window
             VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
+
+        // Inline validation banner shown inside the dialog. Kept in the dialog (not
+        // the window's status bar, which sits behind it) so a rejected Save leaves
+        // the dialog open with all edits intact.
+        var validationError = new InfoBar
+        {
+            Severity     = InfoBarSeverity.Error,
+            IsOpen       = false,
+            IsClosable   = false,
+            Margin       = new Thickness(0, 0, 0, 4),
+        };
+        panel.Children.Insert(0, validationError);
 
         var dialog = new ContentDialog
         {
@@ -987,11 +1003,38 @@ public sealed partial class SettingsWindow : Window
         };
         WidenDialog(dialog, scroll);
 
+        // Validate on Save BEFORE the dialog closes: a Shared key must not collide
+        // with a managed key name, the active account's extra_env keys, or a
+        // read-only non-string shared key. On failure keep the dialog open
+        // (args.Cancel) so the user's edits are preserved rather than discarded.
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            var extra = extraEditor?.Collect();
+            var shared = sharedEditor.Collect() ?? new Dictionary<string, string>();
+            var extraKeys = extra is null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(extra.Keys, StringComparer.Ordinal);
+
+            foreach (var key in shared.Keys)
+            {
+                if (SettingsEnv.ManagedKeys.Contains(key) ||
+                    extraKeys.Contains(key) ||
+                    readOnlyKeys.Contains(key))
+                {
+                    validationError.Message = $"Cannot override managed/account/read-only key \"{key}\".";
+                    validationError.IsOpen  = true;
+                    args.Cancel = true;
+                    return;
+                }
+            }
+        };
+
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
         // Collect the editor state before taking the mutex. Collect() returns null
-        // when the editor has no non-empty rows.
+        // when the editor has no non-empty rows. Validation already passed in the
+        // PrimaryButtonClick handler above (same inputs, no interaction since).
         var extraCollected = extraEditor?.Collect();
         var newShared      = sharedEditor.Collect() ?? new Dictionary<string, string>();
 
@@ -1006,51 +1049,53 @@ public sealed partial class SettingsWindow : Window
                 ? null
                 : freshConfig.Accounts.Find(a => a.Id == active.Id);
 
-            // Step 1: validation. A Shared key must not collide with a managed key
-            // name or with the active account's extra_env keys — that keeps the
-            // three buckets disjoint and settings.json in sync with
-            // config.ManagedKeys. Reject without writing anything.
             var extraKeys = extraCollected is null
                 ? new HashSet<string>(StringComparer.Ordinal)
                 : new HashSet<string>(extraCollected.Keys, StringComparer.Ordinal);
-            foreach (var key in newShared.Keys)
-            {
-                if (SettingsEnv.ManagedKeys.Contains(key) || extraKeys.Contains(key))
-                {
-                    ShowError($"Cannot override managed/account key \"{key}\".");
-                    return;
-                }
-            }
 
-            // Step 2: AccountExtra. If an account is active and its extra_env set
-            // changed, update it and re-apply (rebuilds the managed region + atomic
-            // write + config save). Does not touch shared keys.
+            // Step 1: AccountExtra. If the account's extra_env set changed, update
+            // it. When it is still the active account, re-apply (rebuilds the
+            // managed region + atomic write + config save). When a tray switch made
+            // it inactive between open and Save, ReapplyActiveAccountEnv is a no-op,
+            // so persist the edited config explicitly — otherwise the edit never
+            // reaches disk yet Save reports success.
             if (freshActive != null &&
                 !EnvDictEquals(extraCollected, freshActive.ExtraEnvNullable))
             {
                 freshActive.ExtraEnvNullable = extraCollected;
-                ReapplyActiveEnvIfActive(freshConfig, freshActive.Id);
+                if (freshConfig.ActiveAccountId == freshActive.Id)
+                    ReapplyActiveEnvIfActive(freshConfig, freshActive.Id);
+                else
+                    ConfigStore.Save(ClaudePaths.AppConfigDir, freshConfig);
             }
 
-            // Step 3: Shared. If the shared set changed vs the snapshot, write only
+            // Step 2: Shared. If the shared set changed vs the snapshot, write only
             // the touched shared keys back to settings.json (managed and extra_env
-            // are left untouched). Disjoint from step 2, so order does not matter.
+            // are left untouched). A key the user MOVED from Shared into extra_env
+            // (deleted here, added there) is now owned by step 1, so it must be
+            // excluded from the removal set — otherwise this step would delete the
+            // value step 1 just wrote. Managed keys are never in oldShared, but are
+            // filtered too for defence.
             if (!EnvDictEquals(newShared, oldShared))
             {
-                var newSettings = SettingsEnv.Load(ClaudePaths.SettingsPath);
-                SettingsEnv.ApplySharedEnv(newSettings, oldShared.Keys, newShared);
+                // The extra_env exclusion is only correct when the account is
+                // actually ACTIVE at Save — that is the only case where step 1's
+                // ReapplyActiveAccountEnv wrote those keys into settings.json. If a
+                // tray switch deactivated the account between open and Save, the
+                // moved key was NOT written by step 1, so it must not be excluded
+                // from the removal set (otherwise it is orphaned as a stale string).
+                bool activeAtSave = freshActive != null &&
+                    freshConfig.ActiveAccountId == freshActive.Id;
 
-                var backupsDir = System.IO.Path.Combine(
-                    System.IO.Path.GetDirectoryName(ClaudePaths.SettingsPath) ?? ".",
-                    "backups");
-                AtomicFile.Backup(ClaudePaths.SettingsPath, backupsDir);
+                var removalKeys = oldShared.Keys
+                    .Where(k => (!activeAtSave || !extraKeys.Contains(k)) &&
+                                !SettingsEnv.ManagedKeys.Contains(k))
+                    .ToList();
 
-                var json = newSettings.ToJsonString(
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-                AtomicFile.Write(ClaudePaths.SettingsPath, json);
+                SettingsEnv.SaveShared(ClaudePaths.SettingsPath, removalKeys, newShared);
             }
 
-            // Step 4: reflect the new state and confirm.
+            // Step 3: reflect the new state and confirm.
             _app.RebuildTray();
             Refresh();
             ShowSuccess("Environment variables saved.");

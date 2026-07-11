@@ -25,12 +25,13 @@ namespace CCSwitcher.Core;
 public static class SettingsEnv
 {
     /// <summary>
-    /// The constant set of env keys ccswitcher always owns inside
-    /// <c>settings.json</c>.  On top of these, an account's
-    /// <c>extra_env</c> keys are also managed; those are passed via
-    /// <c>oldManagedKeys</c> / <c>newEnv</c> rather than living here.
+    /// The constant managed env keys in canonical, deterministic order. This is
+    /// the single source of truth for both <see cref="ManagedKeys"/> (membership)
+    /// and the fixed order the Managed bucket is emitted in by
+    /// <see cref="ClassifyEnv"/>, so the order never depends on
+    /// <see cref="HashSet{T}"/> enumeration.
     /// </summary>
-    public static readonly IReadOnlySet<string> ManagedKeys = new HashSet<string>
+    private static readonly string[] ManagedKeyOrder =
     {
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_AUTH_TOKEN",
@@ -39,6 +40,15 @@ public static class SettingsEnv
         "HTTPS_PROXY",
         "NO_PROXY",
     };
+
+    /// <summary>
+    /// The constant set of env keys ccswitcher always owns inside
+    /// <c>settings.json</c>.  On top of these, an account's
+    /// <c>extra_env</c> keys are also managed; those are passed via
+    /// <c>oldManagedKeys</c> / <c>newEnv</c> rather than living here.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ManagedKeys =
+        new HashSet<string>(ManagedKeyOrder, StringComparer.Ordinal);
 
     /// <summary>
     /// Load Claude Code's <c>settings.json</c> as a <see cref="JsonObject"/>.
@@ -109,9 +119,7 @@ public static class SettingsEnv
     /// is active (then AccountExtra is always empty).</param>
     public static EnvBuckets ClassifyEnv(JsonObject settings, Account? active)
     {
-        JsonObject? envObj = null;
-        if (settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject eo)
-            envObj = eo;
+        JsonObject? envObj = TryGetEnvObject(settings);
 
         var managed = new List<KeyValuePair<string, string>>();
         var accountExtra = new List<KeyValuePair<string, string>>();
@@ -121,8 +129,8 @@ public static class SettingsEnv
         if (envObj is null)
             return new EnvBuckets(managed, accountExtra, shared, sharedReadOnly);
 
-        // Managed first, in the fixed ManagedKeys order.
-        foreach (var key in ManagedKeys)
+        // Managed first, in the fixed canonical order (not HashSet enumeration).
+        foreach (var key in ManagedKeyOrder)
         {
             if (envObj.TryGetPropertyValue(key, out var node))
                 managed.Add(new KeyValuePair<string, string>(key, NodeToString(node)));
@@ -167,6 +175,35 @@ public static class SettingsEnv
     }
 
     /// <summary>
+    /// Return the <c>env</c> child object of <paramref name="settings"/> when it is
+    /// present and a JSON object, otherwise <c>null</c>. Read-only: nothing is
+    /// created or written back. Shared by the read-only classify/capture paths.
+    /// </summary>
+    private static JsonObject? TryGetEnvObject(JsonObject settings)
+        => settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject eo
+            ? eo
+            : null;
+
+    /// <summary>
+    /// Return the existing <c>env</c> child object of <paramref name="settings"/>,
+    /// or, when it is absent or not a JSON object, assign a fresh empty
+    /// <see cref="JsonObject"/> into <c>settings["env"]</c> and return that. Shared
+    /// by the mutating merge/apply paths.
+    /// </summary>
+    private static JsonObject GetOrCreateEnvObject(JsonObject settings)
+    {
+        if (settings.TryGetPropertyValue("env", out JsonNode? envNode) &&
+            envNode is JsonObject existing)
+        {
+            return existing;
+        }
+
+        var fresh = new JsonObject();
+        settings["env"] = fresh;
+        return fresh;
+    }
+
+    /// <summary>
     /// Merge app-managed env keys into <paramref name="settings"/>.
     /// </summary>
     /// <param name="settings">
@@ -191,19 +228,8 @@ public static class SettingsEnv
         IEnumerable<string> oldManagedKeys,
         IReadOnlyDictionary<string, string> newEnv)
     {
-        // Get or create the "env" child object.
-        JsonObject envObj;
-        if (settings.TryGetPropertyValue("env", out JsonNode? envNode) &&
-            envNode is JsonObject existingEnvObj)
-        {
-            envObj = existingEnvObj;
-        }
-        else
-        {
-            // Absent or non-object env value → reset to a fresh empty object.
-            envObj = new JsonObject();
-            settings["env"] = envObj;
-        }
+        // Get or create the "env" child object (absent/non-object → fresh empty).
+        JsonObject envObj = GetOrCreateEnvObject(settings);
 
         // Strip the union of the constant managed set and the previously-
         // written managed keys so stale keys are always cleaned up.
@@ -251,17 +277,7 @@ public static class SettingsEnv
         // Get or create the "env" child object. An absent or non-object value is
         // reset to a fresh empty object (there are no shared keys to preserve in
         // that case, and MergeEnv treats a non-object env the same way).
-        JsonObject envObj;
-        if (settings.TryGetPropertyValue("env", out JsonNode? envNode) &&
-            envNode is JsonObject existingEnvObj)
-        {
-            envObj = existingEnvObj;
-        }
-        else
-        {
-            envObj = new JsonObject();
-            settings["env"] = envObj;
-        }
+        JsonObject envObj = GetOrCreateEnvObject(settings);
 
         // Remove only the previously-present shared keys the user dropped.
         foreach (var key in oldSharedKeys)
@@ -275,6 +291,50 @@ public static class SettingsEnv
             envObj[key] = JsonValue.Create(value);
 
         return settings;
+    }
+
+    /// <summary>
+    /// Load <c>settings.json</c>, apply a shared-env edit via
+    /// <see cref="ApplySharedEnv"/>, then back up and atomically write it back —
+    /// the encapsulated, on-disk counterpart of <see cref="ApplySharedEnv"/>.
+    /// Mirrors the backup + <c>WriteIndented</c> + atomic-rename sequence used by
+    /// <c>Proxy.SetEnabled</c> / <c>Switcher</c> so the code-behind never
+    /// hand-rolls the write dance.
+    /// <para>
+    /// The caller computes <paramref name="removalKeys"/> (the shared keys the
+    /// user dropped, already filtered of managed / still-active extra_env keys);
+    /// this method neither strips the managed union nor touches any key outside
+    /// <paramref name="removalKeys"/> ∪ <paramref name="newShared"/>, preserving
+    /// Invariant 1.
+    /// </para>
+    /// </summary>
+    /// <param name="settingsPath">Absolute path to <c>settings.json</c>.</param>
+    /// <param name="removalKeys">Shared keys to remove (the final removal set).</param>
+    /// <param name="newShared">The shared key/value pairs to write back.</param>
+    /// <exception cref="SettingsEnvException">Loading, backing up, or writing failed.</exception>
+    public static void SaveShared(
+        string settingsPath,
+        IEnumerable<string> removalKeys,
+        IReadOnlyDictionary<string, string> newShared)
+    {
+        var settings = Load(settingsPath);
+        ApplySharedEnv(settings, removalKeys, newShared);
+
+        var backupsDir = Path.Combine(
+            Path.GetDirectoryName(settingsPath) ?? ".", "backups");
+
+        try
+        {
+            AtomicFile.Backup(settingsPath, backupsDir);
+
+            var json = settings.ToJsonString(
+                new JsonSerializerOptions { WriteIndented = true });
+            AtomicFile.Write(settingsPath, json);
+        }
+        catch (IOException ex)
+        {
+            throw new SettingsEnvException($"settings.json write failed: {ex.Message}", ex);
+        }
     }
 
     /// <summary>
@@ -326,9 +386,7 @@ public static class SettingsEnv
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        JsonObject? envObj = null;
-        if (settings.TryGetPropertyValue("env", out var envNode) && envNode is JsonObject eo)
-            envObj = eo;
+        JsonObject? envObj = TryGetEnvObject(settings);
 
         foreach (var key in keys)
         {
