@@ -13,6 +13,13 @@ are unaffected.
 ccswitcher is a WinUI 3 app distributed as a self-contained single `.exe` with
 no runtime dependency on the target machine.
 
+<details>
+<summary>Screenshot: tray menu</summary>
+
+![Tray menu with the account list, switch, and proxy toggle](docs/images/tray-menu.png)
+
+</details>
+
 ## Features
 
 - **Multiple Anthropic OAuth accounts** — switch between different Anthropic
@@ -32,6 +39,27 @@ no runtime dependency on the target machine.
   active account's `extra_env`, and your own "shared" keys. The account and
   shared keys are editable in place; edits route to their proper home
   (account config vs. a targeted `settings.json` merge) so both invariants hold.
+
+<details>
+<summary>Screenshot: settings window</summary>
+
+![Settings window with account cards in the native Windows 11 style](docs/images/settings-window.png)
+
+</details>
+
+<details>
+<summary>Screenshot: add / edit account dialog</summary>
+
+![Add / edit account dialog showing account type, base URL, auth kind, and extra env](docs/images/add-account-dialog.png)
+
+</details>
+
+<details>
+<summary>Screenshot: environment editor</summary>
+
+![Environment editor with managed, extra_env, and shared key buckets](docs/images/env-editor.png)
+
+</details>
 
 ## How switching works
 
